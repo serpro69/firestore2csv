@@ -37,15 +37,15 @@ var (
 	faint = color.New(color.Faint).SprintFunc()
 )
 
-func printInfo(format string, a ...interface{}) {
+func printInfo(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%s  %s\n", cyan("INFO"), fmt.Sprintf(format, a...))
 }
 
-func printOK(format string, a ...interface{}) {
+func printOK(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "  %s  %s\n", green("✓"), fmt.Sprintf(format, a...))
 }
 
-func printErr(format string, a ...interface{}) {
+func printErr(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", red("ERROR"), fmt.Sprintf(format, a...))
 }
 
@@ -243,7 +243,7 @@ func exportCollection(ctx context.Context, client *firestore.Client, name string
 	fieldSet := make(map[string]struct{})
 	type docRecord struct {
 		id   string
-		data map[string]interface{}
+		data map[string]any
 	}
 	var docs []docRecord
 
@@ -370,7 +370,7 @@ func printSummaryTable(results []exportResult) {
 	}
 }
 
-func formatValue(v interface{}) string {
+func formatValue(v any) string {
 	switch val := v.(type) {
 	case nil:
 		return ""
@@ -397,10 +397,10 @@ func formatValue(v interface{}) string {
 		return base64.StdEncoding.EncodeToString(val)
 	case *firestore.DocumentRef:
 		return val.Path
-	case []interface{}:
+	case []any:
 		b, _ := json.Marshal(convertForJSON(v))
 		return string(b)
-	case map[string]interface{}:
+	case map[string]any:
 		b, _ := json.Marshal(convertForJSON(v))
 		return string(b)
 	default:
@@ -408,7 +408,7 @@ func formatValue(v interface{}) string {
 	}
 }
 
-func convertForJSON(v interface{}) interface{} {
+func convertForJSON(v any) any {
 	switch val := v.(type) {
 	case nil:
 		return nil
@@ -425,14 +425,14 @@ func convertForJSON(v interface{}) interface{} {
 		return base64.StdEncoding.EncodeToString(val)
 	case *firestore.DocumentRef:
 		return val.Path
-	case []interface{}:
-		out := make([]interface{}, len(val))
+	case []any:
+		out := make([]any, len(val))
 		for i, elem := range val {
 			out[i] = convertForJSON(elem)
 		}
 		return out
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(val))
+	case map[string]any:
+		out := make(map[string]any, len(val))
 		for k, elem := range val {
 			out[k] = convertForJSON(elem)
 		}
