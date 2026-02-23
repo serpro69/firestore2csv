@@ -15,44 +15,44 @@ A CLI tool to export Google Cloud Firestore collections to CSV files.
 Run directly without building a binary:
 
 ```bash
-go run . --project=<project-id> [flags]
+go run . -p <project-id> [flags]
 ```
 
 Or build and run:
 
 ```bash
 go build -o firestore2csv .
-./firestore2csv --project=<project-id> [flags]
+./firestore2csv -p <project-id> [flags]
 ```
 
 ### Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--project` | *(required)* | GCP project ID |
-| `--database` | `(default)` | Firestore database name |
-| `--collections` | *(all)* | Comma-separated collection names to export |
-| `--limit` | `0` (all) | Max documents per collection |
-| `--output` | `.` | Output directory for CSV files |
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--project` | `-p` | *(required)* | GCP project ID |
+| `--database` | `-d` | `(default)` | Firestore database name |
+| `--collections` | `-c` | *(all)* | Comma-separated collection names to export |
+| `--limit` | `-l` | `0` (all) | Max documents per collection |
+| `--output` | `-o` | `.` | Output directory for CSV files |
 
 ### Examples
 
 Export all collections:
 
 ```bash
-go run . --project=my-project
+go run . -p my-project
 ```
 
 Export specific collections with a row limit:
 
 ```bash
-go run . --project=my-project --collections=users,orders --limit=100
+go run . -p my-project -c users,orders -l 100
 ```
 
 Export from a named database to a custom directory:
 
 ```bash
-go run . --project=my-project --database=my-db --output=./export
+go run . -p my-project -d my-db -o ./export
 ```
 
 ## Output Format
