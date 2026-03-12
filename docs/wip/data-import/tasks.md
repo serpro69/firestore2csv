@@ -69,16 +69,16 @@
 - [x] 5.7 Handle `ref` type during write: when a field has type `ref`, convert the path string to a `*firestore.DocumentRef` using the Firestore client before writing
 
 ## Task 6: Import — integration tests
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 5
 - **Docs:** [implementation.md — Phase 3.6](./implementation.md#36-import-tests)
 
 ### Subtasks
-- [ ] 6.1 Round-trip test in `integration_test.go`: seed Firestore via emulator, export with `--with-types`, import the CSV into a different collection, read back all documents and compare field values and types
-- [ ] 6.2 Conflict strategy tests: seed a collection, attempt import with each `--on-conflict` mode (`skip`, `overwrite`, `merge`, `fail`), verify correct behavior per strategy
-- [ ] 6.3 Sub-collection round-trip: seed collections with sub-collections, export, import into fresh collections, verify parent-child hierarchy is preserved
-- [ ] 6.4 Dry-run test: run import with `--dry-run`, verify zero documents written to Firestore
-- [ ] 6.5 Heuristic import test: import a CSV without `__fs_types__` column, verify types are correctly inferred via heuristics
+- [x] 6.1 Round-trip test in `integration_test.go`: seed Firestore via emulator, export with `--with-types`, import the CSV into a different collection, read back all documents and compare field values and types
+- [x] 6.2 Conflict strategy tests: seed a collection, attempt import with each `--on-conflict` mode (`skip`, `overwrite`, `merge`, `fail`), verify correct behavior per strategy
+- [x] 6.3 Sub-collection round-trip: seed collections with sub-collections, export, import into fresh collections, verify parent-child hierarchy is preserved
+- [x] 6.4 Dry-run test: run import with `--dry-run`, verify zero documents written to Firestore
+- [x] 6.5 Heuristic import test: import a CSV without `__fs_types__` column, verify types are correctly inferred via heuristics
 
 ## Task 7: Final verification
 - **Status:** pending
