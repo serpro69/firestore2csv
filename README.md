@@ -34,13 +34,15 @@ go run . -p <project-id> [flags]
 
 ### Flags
 
-| Flag            | Short | Default      | Description                                |
-| --------------- | ----- | ------------ | ------------------------------------------ |
-| `--project`     | `-p`  | _(required)_ | GCP project ID                             |
-| `--database`    | `-d`  | `(default)`  | Firestore database name                    |
-| `--collections` | `-c`  | _(all)_      | Comma-separated collection names to export |
-| `--limit`       | `-l`  | `0` (all)    | Max documents per collection               |
-| `--output`      | `-o`  | `.`          | Output directory for CSV files             |
+| Flag            | Short | Default      | Description                                          |
+| --------------- | ----- | ------------ | ---------------------------------------------------- |
+| `--project`     | `-p`  | _(required)_ | GCP project ID                                       |
+| `--database`    | `-d`  | `(default)`  | Firestore database name                              |
+| `--collections` | `-c`  | _(all)_      | Comma-separated top-level collection names to export |
+| `--limit`       | `-l`  | `0` (all)    | Max documents per top-level collection               |
+| `--child-limit` |       | `0` (all)    | Max documents per sub-collection                     |
+| `--depth`       |       | `-1` (all)   | Max sub-collection depth (`0` = top-level only)      |
+| `--output`      | `-o`  | `.`          | Output directory for CSV files                       |
 
 ### Examples
 
@@ -62,12 +64,47 @@ Export from a named database to a custom directory:
 go run . -p my-project -d my-db -o ./export
 ```
 
+Export only top-level collections (no sub-collections):
+
+```bash
+go run . -p my-project --depth 0
+```
+
+Export with one level of sub-collections, limiting sub-collection docs:
+
+```bash
+go run . -p my-project --depth 1 --child-limit 50
+```
+
 ## Output Format
 
 - One CSV file per collection, named `{collection}.csv`
+- Sub-collections are exported into subdirectories mirroring the Firestore hierarchy
 - First column is `__document_id__` (Firestore document ID)
 - Remaining columns are sorted alphabetically
 - Columns are the union of all fields across documents in the collection
+
+### Sub-collections
+
+Sub-collections are automatically discovered and exported recursively. Documents
+from the same sub-collection across different parent documents are aggregated
+into a single CSV file.
+
+For example, if `users/alice` and `users/bob` both have an `orders`
+sub-collection, all orders are written to `users/orders.csv`.
+
+```
+output/
+  users.csv
+  users/
+    orders.csv
+    orders/
+      items.csv
+  products.csv
+```
+
+Use `--depth` to control how deep to recurse (`0` = top-level only, `1` = one
+level of sub-collections, `-1` = unlimited).
 
 ### Data type mapping
 
