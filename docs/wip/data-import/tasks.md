@@ -18,15 +18,15 @@
 - [x] 1.5 Update existing unit tests in `main_test.go` and integration tests in `integration_test.go` to work with the refactored structure. Verify all existing tests pass
 
 ## Task 2: Export format — replace `__document_id__` with `__path__`
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md — Phase 2.1](./implementation.md#21-replace-__document_id__-with-__path__)
 
 ### Subtasks
-- [ ] 2.1 Update the `docRecord` struct in `main.go`: replace the `id` field with a `path` field that stores the full Firestore document path (e.g. `users/alice`, `users/alice/orders/order1`)
-- [ ] 2.2 In `readAndExportCollection()` and `readAndExportAggregated()`, populate `docRecord.path` using the document ref. Determine the correct way to extract the document path from `snap.Ref` (it may include project/database prefix that needs trimming)
-- [ ] 2.3 In `writeCollectionCSV()`, change the first header from `__document_id__` to `__path__` and write `doc.path` instead of `doc.id`
-- [ ] 2.4 Update all unit and integration tests that check CSV output to expect `__path__` instead of `__document_id__`, including verifying correct full paths for sub-collection documents
+- [x] 2.1 Update the `docRecord` struct in `main.go`: replace the `id` field with a `path` field that stores the full Firestore document path (e.g. `users/alice`, `users/alice/orders/order1`)
+- [x] 2.2 In `readAndExportCollection()` and `readAndExportAggregated()`, populate `docRecord.path` using the document ref. Determine the correct way to extract the document path from `snap.Ref` (it may include project/database prefix that needs trimming)
+- [x] 2.3 In `writeCollectionCSV()`, change the first header from `__document_id__` to `__path__` and write `doc.path` instead of `doc.id`
+- [x] 2.4 Update all unit and integration tests that check CSV output to expect `__path__` instead of `__document_id__`, including verifying correct full paths for sub-collection documents
 
 ## Task 3: Export format — add `--with-types` and `__fs_types__` column
 - **Status:** pending
