@@ -22,3 +22,6 @@ logs
 # AI tools
 !.serena
 !.claude
+
+# output
+firestore2csv
