@@ -21,8 +21,14 @@ import (
 	"google.golang.org/genproto/googleapis/type/latlng"
 )
 
+type docRecord struct {
+	id   string
+	data map[string]any
+}
+
 type exportResult struct {
 	collection string
+	depth      int
 	docCount   int
 	fieldCount int
 	filePath   string
@@ -122,6 +128,10 @@ Each collection is written to a separate CSV file. The first column is always
 __document_id__, and remaining columns are the union of all fields across
 documents in that collection, sorted alphabetically.
 
+Sub-collections are automatically discovered and exported recursively. Output
+files are organized in a directory structure mirroring the collection hierarchy
+(e.g. users.csv, users/orders.csv). Use --depth to limit recursion depth.
+
 Complex types (arrays, maps) are stored as JSON strings. Timestamps use
 RFC3339 format. Authentication uses Google Application Default Credentials.`,
 		SilenceUsage:  true,
@@ -133,7 +143,9 @@ RFC3339 format. Authentication uses Google Application Default Credentials.`,
 	f.StringP("project", "p", "", "GCP project ID (required)")
 	f.StringP("database", "d", "(default)", "Firestore database name")
 	f.StringP("collections", "c", "", "Comma-separated collection names (default: all top-level)")
-	f.IntP("limit", "l", 0, "Max documents per collection (0 = all)")
+	f.IntP("limit", "l", 0, "Max documents per top-level collection (0 = all)")
+	f.Int("child-limit", 0, "Max documents per sub-collection (0 = all)")
+	f.Int("depth", -1, "Max sub-collection depth (-1 = unlimited, 0 = top-level only)")
 	f.StringP("output", "o", ".", "Output directory for CSV files")
 
 	rootCmd.MarkFlagRequired("project")
@@ -150,6 +162,8 @@ func run(cmd *cobra.Command, args []string) error {
 	database, _ := f.GetString("database")
 	collections, _ := f.GetString("collections")
 	limit, _ := f.GetInt("limit")
+	childLimit, _ := f.GetInt("child-limit")
+	maxDepth, _ := f.GetInt("depth")
 	output, _ := f.GetString("output")
 
 	fmt.Fprintln(os.Stderr)
@@ -176,8 +190,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	var results []exportResult
 	for _, name := range collNames {
-		r := exportCollection(ctx, client, name, limit, output)
-		results = append(results, r)
+		results = append(results, exportCollectionTree(ctx, client, name, limit, childLimit, maxDepth, output)...)
 	}
 
 	printSummaryTable(results)
@@ -227,11 +240,61 @@ func resolveCollections(ctx context.Context, client *firestore.Client, flagValue
 	return names, nil
 }
 
-func exportCollection(ctx context.Context, client *firestore.Client, name string, limit int, outputDir string) exportResult {
-	sp := newSpinner(fmt.Sprintf("Reading %q... 0 documents", name))
+// exportCollectionTree exports a top-level collection and recursively exports its sub-collections.
+func exportCollectionTree(ctx context.Context, client *firestore.Client, name string, limit, childLimit, maxDepth int, outputDir string) []exportResult {
+	colRef := client.Collection(name)
+	recurse := maxDepth != 0
+
+	result, docRefs := readAndExportCollection(ctx, colRef, name, 0, limit, recurse, outputDir)
+	results := []exportResult{result}
+	if result.err != nil || !recurse {
+		return results
+	}
+
+	subCols := discoverSubCollections(ctx, docRefs)
+	for _, subName := range sortedKeys(subCols) {
+		parentRefs := subCols[subName]
+		displayPath := name + "/" + subName
+		nextDepth := maxDepth
+		if nextDepth > 0 {
+			nextDepth--
+		}
+		results = append(results, exportSubCollectionTree(ctx, parentRefs, subName, displayPath, 1, nextDepth, childLimit, outputDir)...)
+	}
+
+	return results
+}
+
+// exportSubCollectionTree recursively exports an aggregated sub-collection and its children.
+func exportSubCollectionTree(ctx context.Context, parentRefs []*firestore.DocumentRef, subColName, displayPath string, depth, maxDepth, childLimit int, outputDir string) []exportResult {
+	recurse := maxDepth != 0
+
+	result, docRefs := readAndExportAggregated(ctx, parentRefs, subColName, displayPath, depth, childLimit, recurse, outputDir)
+	results := []exportResult{result}
+	if result.err != nil || !recurse {
+		return results
+	}
+
+	subCols := discoverSubCollections(ctx, docRefs)
+	for _, subSubName := range sortedKeys(subCols) {
+		refs := subCols[subSubName]
+		subDisplayPath := displayPath + "/" + subSubName
+		nextDepth := maxDepth
+		if nextDepth > 0 {
+			nextDepth--
+		}
+		results = append(results, exportSubCollectionTree(ctx, refs, subSubName, subDisplayPath, depth+1, nextDepth, childLimit, outputDir)...)
+	}
+
+	return results
+}
+
+// readAndExportCollection reads documents from a single collection ref and writes a CSV.
+// If recurse is true, it returns the document refs for sub-collection discovery.
+func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRef, displayPath string, depth, limit int, recurse bool, outputDir string) (exportResult, []*firestore.DocumentRef) {
+	sp := newSpinner(fmt.Sprintf("Reading %q... 0 documents", displayPath))
 	sp.Start()
 
-	colRef := client.Collection(name)
 	query := colRef.Query
 	if limit > 0 {
 		query = query.Limit(limit)
@@ -241,11 +304,8 @@ func exportCollection(ctx context.Context, client *firestore.Client, name string
 	defer iter.Stop()
 
 	fieldSet := make(map[string]struct{})
-	type docRecord struct {
-		id   string
-		data map[string]any
-	}
 	var docs []docRecord
+	var docRefs []*firestore.DocumentRef
 
 	count := 0
 	for {
@@ -255,26 +315,135 @@ func exportCollection(ctx context.Context, client *firestore.Client, name string
 		}
 		if err != nil {
 			sp.Stop()
-			printErr("Failed to export %q: %v", name, err)
-			return exportResult{collection: name, err: err}
+			printErr("Failed to export %q: %v", displayPath, err)
+			return exportResult{collection: displayPath, depth: depth, err: err}, nil
 		}
 		data := snap.Data()
 		for k := range data {
 			fieldSet[k] = struct{}{}
 		}
 		docs = append(docs, docRecord{id: snap.Ref.ID, data: data})
+		if recurse {
+			docRefs = append(docRefs, snap.Ref)
+		}
 		count++
-		sp.SetSuffix(fmt.Sprintf("Reading %q... %s documents", name, fmtInt(count)))
+		sp.SetSuffix(fmt.Sprintf("Reading %q... %s documents", displayPath, fmtInt(count)))
 	}
 
 	sp.Stop()
 
 	if len(docs) == 0 {
-		printInfo("Collection %q is empty, skipping.", name)
-		return exportResult{collection: name}
+		printInfo("Collection %q is empty, skipping.", displayPath)
+		return exportResult{collection: displayPath, depth: depth}, nil
 	}
 
-	// Build sorted header, prepend __document_id__
+	filePath, err := writeCollectionCSV(docs, fieldSet, displayPath, outputDir)
+	if err != nil {
+		printErr("Failed to export %q: %v", displayPath, err)
+		return exportResult{collection: displayPath, depth: depth, err: err}, nil
+	}
+
+	printOK("Exported %q — %s docs, %d fields → %s", displayPath, fmtInt(len(docs)), len(fieldSet), filePath)
+
+	return exportResult{
+		collection: displayPath,
+		depth:      depth,
+		docCount:   len(docs),
+		fieldCount: len(fieldSet),
+		filePath:   filePath,
+	}, docRefs
+}
+
+// readAndExportAggregated reads documents from a sub-collection across multiple parent documents
+// and writes them into a single CSV.
+func readAndExportAggregated(ctx context.Context, parentRefs []*firestore.DocumentRef, subColName, displayPath string, depth, childLimit int, recurse bool, outputDir string) (exportResult, []*firestore.DocumentRef) {
+	sp := newSpinner(fmt.Sprintf("Reading %q... 0 documents", displayPath))
+	sp.Start()
+
+	fieldSet := make(map[string]struct{})
+	var docs []docRecord
+	var docRefs []*firestore.DocumentRef
+
+	count := 0
+	for _, parentRef := range parentRefs {
+		colRef := parentRef.Collection(subColName)
+		query := colRef.Query
+		if childLimit > 0 {
+			query = query.Limit(childLimit)
+		}
+
+		iter := query.Documents(ctx)
+		for {
+			snap, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				iter.Stop()
+				sp.Stop()
+				printErr("Failed to export %q: %v", displayPath, err)
+				return exportResult{collection: displayPath, depth: depth, err: err}, nil
+			}
+			data := snap.Data()
+			for k := range data {
+				fieldSet[k] = struct{}{}
+			}
+			docs = append(docs, docRecord{id: snap.Ref.ID, data: data})
+			if recurse {
+				docRefs = append(docRefs, snap.Ref)
+			}
+			count++
+			sp.SetSuffix(fmt.Sprintf("Reading %q... %s documents", displayPath, fmtInt(count)))
+		}
+		iter.Stop()
+	}
+
+	sp.Stop()
+
+	if len(docs) == 0 {
+		printInfo("Collection %q is empty, skipping.", displayPath)
+		return exportResult{collection: displayPath, depth: depth}, nil
+	}
+
+	filePath, err := writeCollectionCSV(docs, fieldSet, displayPath, outputDir)
+	if err != nil {
+		printErr("Failed to export %q: %v", displayPath, err)
+		return exportResult{collection: displayPath, depth: depth, err: err}, nil
+	}
+
+	printOK("Exported %q — %s docs, %d fields → %s", displayPath, fmtInt(len(docs)), len(fieldSet), filePath)
+
+	return exportResult{
+		collection: displayPath,
+		depth:      depth,
+		docCount:   len(docs),
+		fieldCount: len(fieldSet),
+		filePath:   filePath,
+	}, docRefs
+}
+
+// discoverSubCollections finds all sub-collections across the given document refs.
+// Returns a map of sub-collection name → parent document refs that contain it.
+func discoverSubCollections(ctx context.Context, docRefs []*firestore.DocumentRef) map[string][]*firestore.DocumentRef {
+	subCols := make(map[string][]*firestore.DocumentRef)
+	for _, ref := range docRefs {
+		iter := ref.Collections(ctx)
+		for {
+			colRef, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				break
+			}
+			subCols[colRef.ID] = append(subCols[colRef.ID], ref)
+		}
+	}
+	return subCols
+}
+
+// writeCollectionCSV writes document records to a CSV file.
+func writeCollectionCSV(docs []docRecord, fieldSet map[string]struct{}, displayPath, outputDir string) (string, error) {
 	fields := make([]string, 0, len(fieldSet))
 	for k := range fieldSet {
 		fields = append(fields, k)
@@ -282,12 +451,14 @@ func exportCollection(ctx context.Context, client *firestore.Client, name string
 	sort.Strings(fields)
 	headers := append([]string{"__document_id__"}, fields...)
 
-	// Create CSV file
-	filePath := filepath.Join(outputDir, name+".csv")
+	filePath := filepath.Join(outputDir, filepath.FromSlash(displayPath)+".csv")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return "", fmt.Errorf("creating directory for %s: %w", filePath, err)
+	}
+
 	f, err := os.Create(filePath)
 	if err != nil {
-		printErr("Failed to export %q: %v", name, err)
-		return exportResult{collection: name, err: fmt.Errorf("creating file %s: %w", filePath, err)}
+		return "", fmt.Errorf("creating file %s: %w", filePath, err)
 	}
 	defer f.Close()
 
@@ -295,8 +466,7 @@ func exportCollection(ctx context.Context, client *firestore.Client, name string
 	defer w.Flush()
 
 	if err := w.Write(headers); err != nil {
-		printErr("Failed to export %q: %v", name, err)
-		return exportResult{collection: name, err: fmt.Errorf("writing header: %w", err)}
+		return "", fmt.Errorf("writing header: %w", err)
 	}
 
 	for _, doc := range docs {
@@ -311,19 +481,20 @@ func exportCollection(ctx context.Context, client *firestore.Client, name string
 			row[i+1] = formatValue(val)
 		}
 		if err := w.Write(row); err != nil {
-			printErr("Failed to export %q: %v", name, err)
-			return exportResult{collection: name, err: fmt.Errorf("writing row: %w", err)}
+			return "", fmt.Errorf("writing row: %w", err)
 		}
 	}
 
-	printOK("Exported %q — %s docs, %d fields → %s", name, fmtInt(len(docs)), len(fieldSet), filePath)
+	return filePath, nil
+}
 
-	return exportResult{
-		collection: name,
-		docCount:   len(docs),
-		fieldCount: len(fieldSet),
-		filePath:   filePath,
+func sortedKeys(m map[string][]*firestore.DocumentRef) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+	return keys
 }
 
 func printSummaryTable(results []exportResult) {
@@ -341,9 +512,11 @@ func printSummaryTable(results []exportResult) {
 		}
 		docs := fmtInt(r.docCount)
 		fields := fmtInt(r.fieldCount)
-		rows[i] = []string{r.collection, docs, fields, fp}
-		if len(r.collection) > colW {
-			colW = len(r.collection)
+		indent := strings.Repeat("  ", r.depth)
+		displayName := indent + r.collection
+		rows[i] = []string{displayName, docs, fields, fp}
+		if len(displayName) > colW {
+			colW = len(displayName)
 		}
 		if len(docs) > docW {
 			docW = len(docs)
