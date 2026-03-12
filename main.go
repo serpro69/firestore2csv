@@ -152,6 +152,27 @@ func (s *spinner) Stop() {
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "firestore2csv",
+		Short: "Export and import Firestore collections as CSV files",
+		Long: `Export and import Firestore collections as CSV files.
+
+Use 'firestore2csv export' to export collections to CSV, or
+'firestore2csv import' to import CSV files into Firestore.
+
+Run 'firestore2csv <command> --help' for details on each command.`,
+		Version:       buildVersion(),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	// Shared flags on root (inherited by subcommands)
+	pf := rootCmd.PersistentFlags()
+	pf.StringP("project", "p", "", "GCP project ID")
+	pf.StringP("emulator", "e", "", "Firestore emulator host (e.g. localhost:8686)")
+	pf.StringP("database", "d", "(default)", "Firestore database name")
+
+	// Export subcommand
+	exportCmd := &cobra.Command{
+		Use:   "export",
 		Short: "Export Firestore collections to CSV files",
 		Long: `Export Firestore collections to CSV files.
 
@@ -165,22 +186,43 @@ files are organized in a directory structure mirroring the collection hierarchy
 
 Complex types (arrays, maps) are stored as JSON strings. Timestamps use
 RFC3339 format. Authentication uses Google Application Default Credentials.`,
-		Version:       buildVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE:          run,
 	}
 
-	f := rootCmd.Flags()
-	f.StringP("project", "p", "", "GCP project ID (required)")
-	f.StringP("database", "d", "(default)", "Firestore database name")
-	f.StringP("collections", "c", "", "Comma-separated collection names (default: all top-level)")
-	f.IntP("limit", "l", 0, "Max documents per top-level collection (0 = all)")
-	f.Int("child-limit", 0, "Max documents per sub-collection (0 = all)")
-	f.Int("depth", -1, "Max sub-collection depth (-1 = unlimited, 0 = top-level only)")
-	f.StringP("output", "o", ".", "Output directory for CSV files")
+	ef := exportCmd.Flags()
+	ef.StringP("collections", "c", "", "Comma-separated collection names (default: all top-level)")
+	ef.IntP("limit", "l", 0, "Max documents per top-level collection (0 = all)")
+	ef.Int("child-limit", 0, "Max documents per sub-collection (0 = all)")
+	ef.Int("depth", -1, "Max sub-collection depth (-1 = unlimited, 0 = top-level only)")
+	ef.StringP("output", "o", ".", "Output directory for CSV files")
 
-	rootCmd.MarkFlagRequired("project")
+	// Import subcommand (stub)
+	importCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import CSV files into Firestore",
+		Long: `Import CSV files into Firestore.
+
+Reads CSV files (exported by 'firestore2csv export') and writes the data
+back into Firestore. The __path__ column determines the document location.
+
+Use --on-conflict to control behavior when documents already exist.
+Use --dry-run to validate without writing.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("not yet implemented")
+		},
+	}
+
+	imf := importCmd.Flags()
+	imf.StringSliceP("input", "i", []string{"."}, "Input files or directories (repeatable)")
+	imf.String("on-conflict", "skip", "Conflict strategy: skip, overwrite, merge, fail")
+	imf.Bool("dry-run", false, "Validate and report without writing to Firestore")
+
+	rootCmd.AddCommand(exportCmd)
+	rootCmd.AddCommand(importCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "\n%s %s\n", red("ERROR"), err)
@@ -191,6 +233,7 @@ RFC3339 format. Authentication uses Google Application Default Credentials.`,
 type exportConfig struct {
 	project     string
 	database    string
+	emulator    string
 	collections string
 	limit       int
 	childLimit  int
@@ -198,10 +241,38 @@ type exportConfig struct {
 	output      string
 }
 
-func run(cmd *cobra.Command, args []string) error {
+// validateConnectionFlags ensures exactly one of --project or --emulator is provided.
+func validateConnectionFlags(cmd *cobra.Command) (project, database, emulator string, err error) {
 	f := cmd.Flags()
-	project, _ := f.GetString("project")
-	database, _ := f.GetString("database")
+	project, _ = f.GetString("project")
+	emulator, _ = f.GetString("emulator")
+	database, _ = f.GetString("database")
+
+	if project == "" && emulator == "" {
+		return "", "", "", fmt.Errorf("exactly one of --project or --emulator must be provided")
+	}
+	if project != "" && emulator != "" {
+		return "", "", "", fmt.Errorf("--project and --emulator are mutually exclusive")
+	}
+	return project, database, emulator, nil
+}
+
+// newFirestoreClient creates a Firestore client, handling emulator configuration.
+func newFirestoreClient(ctx context.Context, project, database, emulator string) (*firestore.Client, error) {
+	if emulator != "" {
+		os.Setenv("FIRESTORE_EMULATOR_HOST", emulator)
+		project = "emulator-project"
+	}
+	return firestore.NewClientWithDatabase(ctx, project, database)
+}
+
+func run(cmd *cobra.Command, args []string) error {
+	project, database, emulator, err := validateConnectionFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	f := cmd.Flags()
 	collections, _ := f.GetString("collections")
 	limit, _ := f.GetInt("limit")
 	childLimit, _ := f.GetInt("child-limit")
@@ -211,6 +282,7 @@ func run(cmd *cobra.Command, args []string) error {
 	return runExport(exportConfig{
 		project:     project,
 		database:    database,
+		emulator:    emulator,
 		collections: collections,
 		limit:       limit,
 		childLimit:  childLimit,
@@ -221,14 +293,18 @@ func run(cmd *cobra.Command, args []string) error {
 
 func runExport(cfg exportConfig) error {
 	fmt.Fprintln(os.Stderr)
-	printInfo("Connecting to project %s (database: %s)", bold(cfg.project), bold(cfg.database))
+	displayProject := cfg.project
+	if cfg.emulator != "" {
+		displayProject = fmt.Sprintf("emulator @ %s", cfg.emulator)
+	}
+	printInfo("Connecting to %s (database: %s)", bold(displayProject), bold(cfg.database))
 
 	if err := os.MkdirAll(cfg.output, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory %q: %w", cfg.output, err)
 	}
 
 	ctx := context.Background()
-	client, err := firestore.NewClientWithDatabase(ctx, cfg.project, cfg.database)
+	client, err := newFirestoreClient(ctx, cfg.project, cfg.database, cfg.emulator)
 	if err != nil {
 		return fmt.Errorf("failed to create Firestore client: %w", err)
 	}

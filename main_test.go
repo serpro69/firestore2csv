@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/csv"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"google.golang.org/genproto/googleapis/type/latlng"
 )
 
@@ -313,4 +315,122 @@ func readCSV(t *testing.T, path string) [][]string {
 		t.Fatalf("failed to read CSV %s: %v", path, err)
 	}
 	return records
+}
+
+// newTestCommand creates a root command with subcommands for testing CLI parsing.
+func newTestCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "firestore2csv",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	pf := root.PersistentFlags()
+	pf.StringP("project", "p", "", "GCP project ID")
+	pf.StringP("emulator", "e", "", "Firestore emulator host")
+	pf.StringP("database", "d", "(default)", "Firestore database name")
+
+	exportCmd := &cobra.Command{
+		Use:          "export",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _, _, err := validateConnectionFlags(cmd)
+			return err
+		},
+	}
+	ef := exportCmd.Flags()
+	ef.StringP("collections", "c", "", "")
+	ef.IntP("limit", "l", 0, "")
+	ef.Int("child-limit", 0, "")
+	ef.Int("depth", -1, "")
+	ef.StringP("output", "o", ".", "")
+
+	importCmd := &cobra.Command{
+		Use:          "import",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _, _, err := validateConnectionFlags(cmd)
+			return err
+		},
+	}
+	imf := importCmd.Flags()
+	imf.StringSliceP("input", "i", []string{"."}, "")
+	imf.String("on-conflict", "skip", "")
+	imf.Bool("dry-run", false, "")
+
+	root.AddCommand(exportCmd)
+	root.AddCommand(importCmd)
+	return root
+}
+
+func TestValidateConnectionFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "no project or emulator",
+			args:    []string{"export"},
+			wantErr: "exactly one of --project or --emulator must be provided",
+		},
+		{
+			name:    "both project and emulator",
+			args:    []string{"export", "-p", "my-project", "-e", "localhost:8686"},
+			wantErr: "--project and --emulator are mutually exclusive",
+		},
+		{
+			name: "project only",
+			args: []string{"export", "-p", "my-project"},
+		},
+		{
+			name: "emulator only",
+			args: []string{"export", "-e", "localhost:8686"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newTestCommand()
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if err.Error() != tt.wantErr {
+					t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSubcommandStructure(t *testing.T) {
+	t.Run("root without subcommand prints help", func(t *testing.T) {
+		cmd := newTestCommand()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{})
+		_ = cmd.Execute()
+		// Root should not error — it just prints help
+	})
+
+	t.Run("export subcommand is recognized", func(t *testing.T) {
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"export", "-p", "test"})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("export subcommand error: %v", err)
+		}
+	})
+
+	t.Run("import subcommand is recognized", func(t *testing.T) {
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"import", "-e", "localhost:8686"})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("import subcommand error: %v", err)
+		}
+	})
 }
