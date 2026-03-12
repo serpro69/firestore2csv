@@ -29,17 +29,17 @@
 - [x] 2.4 Update all unit and integration tests that check CSV output to expect `__path__` instead of `__document_id__`, including verifying correct full paths for sub-collection documents
 
 ## Task 3: Export format — add `--with-types` and `__fs_types__` column
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 2
 - **Docs:** [implementation.md — Phase 2.2](./implementation.md#22-add---with-types-flag-and-__fs_types__-column)
 
 ### Subtasks
-- [ ] 3.1 Add a `typeLabel(v any) string` function in `main.go` that returns the type label (`"string"`, `"bool"`, `"int"`, `"float"`, `"timestamp"`, `"geo"`, `"bytes"`, `"ref"`, `"array"`, `"map"`) based on the Go type of the Firestore value — similar switch structure to `formatValue()`
-- [ ] 3.2 Add `--with-types` boolean flag to the `export` subcommand. Pass it through `exportConfig` down to `writeCollectionCSV()`
-- [ ] 3.3 In `writeCollectionCSV()`, when `withTypes` is true: append `__fs_types__` to headers, and for each row build a JSON object mapping every field name to `typeLabel(value)` and write it as the last cell
-- [ ] 3.4 Write unit tests for `typeLabel()` covering all Firestore types
-- [ ] 3.5 Write unit tests for `writeCollectionCSV()` with `withTypes=true`, verifying correct `__fs_types__` column content including rows with mixed types
-- [ ] 3.6 Add integration test verifying `__fs_types__` contains correct types for a collection with diverse Firestore types
+- [x] 3.1 Add a `typeLabel(v any) string` function in `main.go` that returns the type label (`"string"`, `"bool"`, `"int"`, `"float"`, `"timestamp"`, `"geo"`, `"bytes"`, `"ref"`, `"array"`, `"map"`) based on the Go type of the Firestore value — similar switch structure to `formatValue()`
+- [x] 3.2 Add `--with-types` boolean flag to the `export` subcommand. Pass it through `exportConfig` down to `writeCollectionCSV()`
+- [x] 3.3 In `writeCollectionCSV()`, when `withTypes` is true: append `__fs_types__` to headers, and for each row build a JSON object mapping every field name to `typeLabel(value)` and write it as the last cell
+- [x] 3.4 Write unit tests for `typeLabel()` covering all Firestore types
+- [x] 3.5 Write unit tests for `writeCollectionCSV()` with `withTypes=true`, verifying correct `__fs_types__` column content including rows with mixed types
+- [x] 3.6 Add integration test verifying `__fs_types__` contains correct types for a collection with diverse Firestore types
 
 ## Task 4: Import — CSV parsing and type reconstruction
 - **Status:** pending
