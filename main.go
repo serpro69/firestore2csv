@@ -799,3 +799,217 @@ func convertForJSON(v any) any {
 		return fmt.Sprintf("%v", v)
 	}
 }
+
+// --- Import functions ---
+
+type importRecord struct {
+	path string
+	data map[string]any
+}
+
+// castValue converts a CSV string to the correct Go type based on the type label.
+func castValue(raw string, typeName string) (any, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	switch typeName {
+	case "string":
+		return raw, nil
+	case "bool":
+		return strconv.ParseBool(raw)
+	case "int":
+		return strconv.ParseInt(raw, 10, 64)
+	case "float":
+		return strconv.ParseFloat(raw, 64)
+	case "timestamp":
+		return time.Parse(time.RFC3339Nano, raw)
+	case "geo":
+		var obj map[string]float64
+		if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+			return nil, fmt.Errorf("invalid geo JSON: %w", err)
+		}
+		lat, hasLat := obj["lat"]
+		lng, hasLng := obj["lng"]
+		if !hasLat || !hasLng {
+			return nil, fmt.Errorf("geo JSON must have 'lat' and 'lng' keys")
+		}
+		return &latlng.LatLng{Latitude: lat, Longitude: lng}, nil
+	case "bytes":
+		return base64.StdEncoding.DecodeString(raw)
+	case "ref":
+		return raw, nil
+	case "array":
+		var arr []any
+		if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+			return nil, fmt.Errorf("invalid array JSON: %w", err)
+		}
+		return arr, nil
+	case "map":
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			return nil, fmt.Errorf("invalid map JSON: %w", err)
+		}
+		return m, nil
+	default:
+		return nil, fmt.Errorf("unknown type label: %q", typeName)
+	}
+}
+
+// detectType applies heuristic type detection to a raw CSV string.
+func detectType(raw string) (any, error) {
+	if raw == "" {
+		return nil, nil
+	}
+
+	// bool (case-sensitive)
+	if raw == "true" {
+		return true, nil
+	}
+	if raw == "false" {
+		return false, nil
+	}
+
+	// timestamp (RFC3339)
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t, nil
+	}
+
+	// integer
+	if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return i, nil
+	}
+
+	// float
+	if f, err := strconv.ParseFloat(raw, 64); err == nil {
+		// Only treat as float if it contains a decimal point or exponent,
+		// otherwise it would have been caught by ParseInt above.
+		if strings.ContainsAny(raw, ".eE") {
+			return f, nil
+		}
+	}
+
+	// JSON object
+	if len(raw) >= 2 && raw[0] == '{' {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			return m, nil
+		}
+	}
+
+	// JSON array
+	if len(raw) >= 2 && raw[0] == '[' {
+		var arr []any
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			return arr, nil
+		}
+	}
+
+	// default: string
+	return raw, nil
+}
+
+// parseCSVFile reads a CSV file and returns import records with typed field values.
+func parseCSVFile(path string) ([]importRecord, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("reading CSV %s: %w", path, err)
+	}
+
+	if len(rows) < 1 {
+		return nil, fmt.Errorf("CSV file %s has no header row", path)
+	}
+
+	headers := rows[0]
+
+	// Find special column indices
+	pathIdx := -1
+	typesIdx := -1
+	for i, h := range headers {
+		switch h {
+		case "__path__":
+			pathIdx = i
+		case "__fs_types__":
+			typesIdx = i
+		}
+	}
+	if pathIdx < 0 {
+		return nil, fmt.Errorf("CSV file %s is missing required __path__ column", path)
+	}
+
+	// Identify data field columns (exclude __path__ and __fs_types__)
+	type fieldCol struct {
+		name string
+		idx  int
+	}
+	var dataFields []fieldCol
+	for i, h := range headers {
+		if i == pathIdx || i == typesIdx {
+			continue
+		}
+		dataFields = append(dataFields, fieldCol{name: h, idx: i})
+	}
+
+	var records []importRecord
+	for _, row := range rows[1:] {
+		docPath := row[pathIdx]
+		if docPath == "" {
+			continue
+		}
+
+		// Parse type map if available
+		var typeMap map[string]string
+		if typesIdx >= 0 && typesIdx < len(row) && row[typesIdx] != "" {
+			if err := json.Unmarshal([]byte(row[typesIdx]), &typeMap); err != nil {
+				return nil, fmt.Errorf("invalid __fs_types__ JSON in row with path %q: %w", docPath, err)
+			}
+		}
+
+		data := make(map[string]any, len(dataFields))
+		for _, fc := range dataFields {
+			raw := ""
+			if fc.idx < len(row) {
+				raw = row[fc.idx]
+			}
+
+			var val any
+			if typeMap != nil {
+				typeName, hasType := typeMap[fc.name]
+				if !hasType {
+					// Field not in type map — treat empty as nil, otherwise string
+					if raw == "" {
+						continue
+					}
+					val = raw
+				} else {
+					var castErr error
+					val, castErr = castValue(raw, typeName)
+					if castErr != nil {
+						return nil, fmt.Errorf("casting field %q (type %q) in row %q: %w", fc.name, typeName, docPath, castErr)
+					}
+				}
+			} else {
+				var detectErr error
+				val, detectErr = detectType(raw)
+				if detectErr != nil {
+					return nil, fmt.Errorf("detecting type for field %q in row %q: %w", fc.name, docPath, detectErr)
+				}
+			}
+
+			if val == nil {
+				continue
+			}
+			data[fc.name] = val
+		}
+
+		records = append(records, importRecord{path: docPath, data: data})
+	}
+
+	return records, nil
+}

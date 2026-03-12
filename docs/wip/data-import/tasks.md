@@ -42,17 +42,17 @@
 - [x] 3.6 Add integration test verifying `__fs_types__` contains correct types for a collection with diverse Firestore types
 
 ## Task 4: Import — CSV parsing and type reconstruction
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3
 - **Docs:** [implementation.md — Phase 3.1](./implementation.md#31-csv-parsing-and-type-reconstruction)
 
 ### Subtasks
-- [ ] 4.1 Create `castValue(raw string, typeName string) (any, error)` in `main.go` — converts a CSV string to the correct Go type based on type label. Handle: `string` (passthrough), `bool` (parse), `int` (parse int64), `float` (parse float64), `timestamp` (parse RFC3339Nano → `time.Time`), `geo` (parse JSON → `*latlng.LatLng`), `bytes` (base64 decode), `ref` (store as string path), `array` (parse JSON → `[]any`), `map` (parse JSON → `map[string]any`)
-- [ ] 4.2 Create `detectType(raw string) (any, error)` in `main.go` — heuristic detection following priority: empty → nil, `true`/`false` → bool, RFC3339 → timestamp, integer → int64, float → float64, JSON object → map, JSON array → array, else → string
-- [ ] 4.3 Create `parseCSVFile(path string) ([]importRecord, error)` in `main.go` — reads a CSV file, extracts `__path__` and optionally `__fs_types__`, and for each row produces an `importRecord` with the document path and a `map[string]any` of typed field values. Use `castValue` when types are available, `detectType` otherwise
-- [ ] 4.4 Write unit tests for `castValue()` — all type labels with valid inputs, error cases for malformed values
-- [ ] 4.5 Write unit tests for `detectType()` — each heuristic case, edge cases like `"42"` → int, `"42.0"` → float, `"true"` → bool, ISO timestamp, JSON object/array, plain string
-- [ ] 4.6 Write unit tests for `parseCSVFile()` — CSV with and without `__fs_types__`, mixed types across rows, missing values, empty `__fs_types__` cells
+- [x] 4.1 Create `castValue(raw string, typeName string) (any, error)` in `main.go` — converts a CSV string to the correct Go type based on type label. Handle: `string` (passthrough), `bool` (parse), `int` (parse int64), `float` (parse float64), `timestamp` (parse RFC3339Nano → `time.Time`), `geo` (parse JSON → `*latlng.LatLng`), `bytes` (base64 decode), `ref` (store as string path), `array` (parse JSON → `[]any`), `map` (parse JSON → `map[string]any`)
+- [x] 4.2 Create `detectType(raw string) (any, error)` in `main.go` — heuristic detection following priority: empty → nil, `true`/`false` → bool, RFC3339 → timestamp, integer → int64, float → float64, JSON object → map, JSON array → array, else → string
+- [x] 4.3 Create `parseCSVFile(path string) ([]importRecord, error)` in `main.go` — reads a CSV file, extracts `__path__` and optionally `__fs_types__`, and for each row produces an `importRecord` with the document path and a `map[string]any` of typed field values. Use `castValue` when types are available, `detectType` otherwise
+- [x] 4.4 Write unit tests for `castValue()` — all type labels with valid inputs, error cases for malformed values
+- [x] 4.5 Write unit tests for `detectType()` — each heuristic case, edge cases like `"42"` → int, `"42.0"` → float, `"true"` → bool, ISO timestamp, JSON object/array, plain string
+- [x] 4.6 Write unit tests for `parseCSVFile()` — CSV with and without `__fs_types__`, mixed types across rows, missing values, empty `__fs_types__` cells
 
 ## Task 5: Import — orchestration, conflict handling, and dry-run
 - **Status:** pending

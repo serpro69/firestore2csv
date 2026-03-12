@@ -563,6 +563,270 @@ func TestValidateConnectionFlags(t *testing.T) {
 	}
 }
 
+func TestCastValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		typeName string
+		want     any
+		wantErr  bool
+	}{
+		{"empty string", "", "string", nil, false},
+		{"empty int", "", "int", nil, false},
+		{"string", "hello", "string", "hello", false},
+		{"bool true", "true", "bool", true, false},
+		{"bool false", "false", "bool", false, false},
+		{"bool invalid", "yes", "bool", nil, true},
+		{"int", "42", "int", int64(42), false},
+		{"int negative", "-100", "int", int64(-100), false},
+		{"int invalid", "abc", "int", nil, true},
+		{"float", "3.14", "float", float64(3.14), false},
+		{"float invalid", "abc", "float", nil, true},
+		{"timestamp", "2024-06-15T12:00:00Z", "timestamp", time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC), false},
+		{"timestamp invalid", "not-a-time", "timestamp", nil, true},
+		{"geo", `{"lat":37.7749,"lng":-122.4194}`, "geo", &latlng.LatLng{Latitude: 37.7749, Longitude: -122.4194}, false},
+		{"geo missing lat", `{"lng":1.0}`, "geo", nil, true},
+		{"geo invalid json", `not json`, "geo", nil, true},
+		{"bytes", base64.StdEncoding.EncodeToString([]byte("hello")), "bytes", []byte("hello"), false},
+		{"bytes invalid", "!!!not-base64", "bytes", nil, true},
+		{"ref", "users/alice", "ref", "users/alice", false},
+		{"array", `["a","b"]`, "array", []any{"a", "b"}, false},
+		{"array invalid", `not json`, "array", nil, true},
+		{"map", `{"key":"val"}`, "map", map[string]any{"key": "val"}, false},
+		{"map invalid", `not json`, "map", nil, true},
+		{"unknown type", "x", "unknown", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := castValue(tt.raw, tt.typeName)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch w := tt.want.(type) {
+			case nil:
+				if got != nil {
+					t.Errorf("got %v (%T), want nil", got, got)
+				}
+			case []byte:
+				g, ok := got.([]byte)
+				if !ok {
+					t.Fatalf("got %T, want []byte", got)
+				}
+				if string(g) != string(w) {
+					t.Errorf("got %v, want %v", g, w)
+				}
+			case *latlng.LatLng:
+				g, ok := got.(*latlng.LatLng)
+				if !ok {
+					t.Fatalf("got %T, want *latlng.LatLng", got)
+				}
+				if g.Latitude != w.Latitude || g.Longitude != w.Longitude {
+					t.Errorf("got {%v,%v}, want {%v,%v}", g.Latitude, g.Longitude, w.Latitude, w.Longitude)
+				}
+			case []any:
+				g, ok := got.([]any)
+				if !ok {
+					t.Fatalf("got %T, want []any", got)
+				}
+				if len(g) != len(w) {
+					t.Errorf("got len %d, want len %d", len(g), len(w))
+				}
+			case map[string]any:
+				g, ok := got.(map[string]any)
+				if !ok {
+					t.Fatalf("got %T, want map[string]any", got)
+				}
+				if len(g) != len(w) {
+					t.Errorf("got len %d, want len %d", len(g), len(w))
+				}
+			default:
+				if got != tt.want {
+					t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestDetectType(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want any
+	}{
+		{"empty", "", nil},
+		{"true", "true", true},
+		{"false", "false", false},
+		{"True is string", "True", "True"},
+		{"timestamp", "2024-06-15T12:00:00Z", time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)},
+		{"integer", "42", int64(42)},
+		{"negative int", "-100", int64(-100)},
+		{"float", "42.0", float64(42.0)},
+		{"float scientific", "1.5e2", float64(150.0)},
+		{"json object", `{"key":"val"}`, map[string]any{"key": "val"}},
+		{"json array", `["a","b"]`, []any{"a", "b"}},
+		{"plain string", "hello world", "hello world"},
+		{"number-like string", "123abc", "123abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := detectType(tt.raw)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch w := tt.want.(type) {
+			case nil:
+				if got != nil {
+					t.Errorf("got %v (%T), want nil", got, got)
+				}
+			case time.Time:
+				g, ok := got.(time.Time)
+				if !ok {
+					t.Fatalf("got %T, want time.Time", got)
+				}
+				if !g.Equal(w) {
+					t.Errorf("got %v, want %v", g, w)
+				}
+			case map[string]any:
+				g, ok := got.(map[string]any)
+				if !ok {
+					t.Fatalf("got %T, want map[string]any", got)
+				}
+				if len(g) != len(w) {
+					t.Errorf("got len %d, want len %d", len(g), len(w))
+				}
+			case []any:
+				g, ok := got.([]any)
+				if !ok {
+					t.Fatalf("got %T, want []any", got)
+				}
+				if len(g) != len(w) {
+					t.Errorf("got len %d, want len %d", len(g), len(w))
+				}
+			default:
+				if got != tt.want {
+					t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseCSVFile_WithTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	content := `__path__,name,age,active,__fs_types__
+users/alice,Alice,30,true,"{""name"":""string"",""age"":""int"",""active"":""bool""}"
+users/bob,Bob,25,false,"{""name"":""string"",""age"":""int"",""active"":""bool""}"
+`
+	if err := os.WriteFile(csvPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test CSV: %v", err)
+	}
+
+	records, err := parseCSVFile(csvPath)
+	if err != nil {
+		t.Fatalf("parseCSVFile() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+
+	r := records[0]
+	if r.path != "users/alice" {
+		t.Errorf("path = %q, want %q", r.path, "users/alice")
+	}
+	if r.data["name"] != "Alice" {
+		t.Errorf("name = %v, want Alice", r.data["name"])
+	}
+	if r.data["age"] != int64(30) {
+		t.Errorf("age = %v (%T), want int64(30)", r.data["age"], r.data["age"])
+	}
+	if r.data["active"] != true {
+		t.Errorf("active = %v, want true", r.data["active"])
+	}
+}
+
+func TestParseCSVFile_WithoutTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	content := `__path__,name,age,active
+users/alice,Alice,30,true
+users/bob,Bob,25,false
+`
+	if err := os.WriteFile(csvPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test CSV: %v", err)
+	}
+
+	records, err := parseCSVFile(csvPath)
+	if err != nil {
+		t.Fatalf("parseCSVFile() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+
+	r := records[0]
+	// Without types, heuristics apply: 30 → int64, true → bool
+	if r.data["age"] != int64(30) {
+		t.Errorf("age = %v (%T), want int64(30)", r.data["age"], r.data["age"])
+	}
+	if r.data["active"] != true {
+		t.Errorf("active = %v, want true", r.data["active"])
+	}
+	if r.data["name"] != "Alice" {
+		t.Errorf("name = %v, want Alice", r.data["name"])
+	}
+}
+
+func TestParseCSVFile_MissingPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	content := "name,age\nAlice,30\n"
+	if err := os.WriteFile(csvPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test CSV: %v", err)
+	}
+
+	_, err := parseCSVFile(csvPath)
+	if err == nil {
+		t.Fatal("expected error for missing __path__ column")
+	}
+}
+
+func TestParseCSVFile_EmptyValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "test.csv")
+	content := `__path__,name,age
+users/alice,Alice,
+users/bob,,25
+`
+	if err := os.WriteFile(csvPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test CSV: %v", err)
+	}
+
+	records, err := parseCSVFile(csvPath)
+	if err != nil {
+		t.Fatalf("parseCSVFile() error = %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+
+	// alice: age is empty → nil → omitted from data
+	if _, ok := records[0].data["age"]; ok {
+		t.Error("alice should not have 'age' key (empty value)")
+	}
+	// bob: name is empty → nil → omitted from data
+	if _, ok := records[1].data["name"]; ok {
+		t.Error("bob should not have 'name' key (empty value)")
+	}
+}
+
 func TestSubcommandStructure(t *testing.T) {
 	t.Run("root without subcommand prints help", func(t *testing.T) {
 		cmd := newTestCommand()
