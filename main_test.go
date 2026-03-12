@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/csv"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -209,7 +210,7 @@ func TestWriteCollectionCSV_Basic(t *testing.T) {
 	}
 	fieldSet := map[string]struct{}{"name": {}, "age": {}}
 
-	filePath, err := writeCollectionCSV(docs, fieldSet, "users", tmpDir)
+	filePath, err := writeCollectionCSV(docs, fieldSet, "users", tmpDir, false)
 	if err != nil {
 		t.Fatalf("writeCollectionCSV() error = %v", err)
 	}
@@ -242,7 +243,7 @@ func TestWriteCollectionCSV_EmptyDocs(t *testing.T) {
 	tmpDir := t.TempDir()
 	fieldSet := map[string]struct{}{"a": {}}
 
-	filePath, err := writeCollectionCSV(nil, fieldSet, "empty", tmpDir)
+	filePath, err := writeCollectionCSV(nil, fieldSet, "empty", tmpDir, false)
 	if err != nil {
 		t.Fatalf("writeCollectionCSV() error = %v", err)
 	}
@@ -260,7 +261,7 @@ func TestWriteCollectionCSV_NestedPath(t *testing.T) {
 	}
 	fieldSet := map[string]struct{}{"total": {}}
 
-	filePath, err := writeCollectionCSV(docs, fieldSet, "users/orders", tmpDir)
+	filePath, err := writeCollectionCSV(docs, fieldSet, "users/orders", tmpDir, false)
 	if err != nil {
 		t.Fatalf("writeCollectionCSV() error = %v", err)
 	}
@@ -283,7 +284,7 @@ func TestWriteCollectionCSV_MissingFields(t *testing.T) {
 	}
 	fieldSet := map[string]struct{}{"a": {}, "b": {}}
 
-	filePath, err := writeCollectionCSV(docs, fieldSet, "sparse", tmpDir)
+	filePath, err := writeCollectionCSV(docs, fieldSet, "sparse", tmpDir, false)
 	if err != nil {
 		t.Fatalf("writeCollectionCSV() error = %v", err)
 	}
@@ -313,7 +314,7 @@ func TestWriteCollectionCSV_SpecialCharacters(t *testing.T) {
 	}
 	fieldSet := map[string]struct{}{"text": {}}
 
-	filePath, err := writeCollectionCSV(docs, fieldSet, "special", tmpDir)
+	filePath, err := writeCollectionCSV(docs, fieldSet, "special", tmpDir, false)
 	if err != nil {
 		t.Fatalf("writeCollectionCSV() error = %v", err)
 	}
@@ -324,6 +325,135 @@ func TestWriteCollectionCSV_SpecialCharacters(t *testing.T) {
 	}
 	if records[2][1] != "line1\nline2" {
 		t.Errorf("row 2 text = %q, want %q", records[2][1], "line1\nline2")
+	}
+}
+
+func TestTypeLabel(t *testing.T) {
+	fixedTime := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name  string
+		input any
+		want  string
+	}{
+		{"string", "hello", "string"},
+		{"bool", true, "bool"},
+		{"int64", int64(42), "int"},
+		{"float64", float64(3.14), "float"},
+		{"timestamp", fixedTime, "timestamp"},
+		{"geo", &latlng.LatLng{Latitude: 1.0, Longitude: 2.0}, "geo"},
+		{"bytes", []byte("abc"), "bytes"},
+		{"array", []any{"a", "b"}, "array"},
+		{"map", map[string]any{"k": "v"}, "map"},
+		{"unknown", struct{}{}, "string"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := typeLabel(tt.input)
+			if got != tt.want {
+				t.Errorf("typeLabel(%T) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTypeLabel_DocumentRef(t *testing.T) {
+	client, err := firestore.NewClient(context.Background(), "test-project")
+	if err != nil {
+		t.Skipf("cannot create Firestore client: %v", err)
+	}
+	defer client.Close()
+
+	ref := client.Doc("users/alice")
+	if got := typeLabel(ref); got != "ref" {
+		t.Errorf("typeLabel(DocumentRef) = %q, want %q", got, "ref")
+	}
+}
+
+func TestWriteCollectionCSV_WithTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	fixedTime := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+	docs := []docRecord{
+		{path: "things/doc1", data: map[string]any{
+			"name":   "Alice",
+			"age":    int64(30),
+			"active": true,
+			"score":  float64(9.5),
+			"joined": fixedTime,
+		}},
+		{path: "things/doc2", data: map[string]any{
+			"name": "Bob",
+			"age":  int64(25),
+			"tags": []any{"a", "b"},
+		}},
+	}
+	fieldSet := map[string]struct{}{
+		"name": {}, "age": {}, "active": {}, "score": {}, "joined": {}, "tags": {},
+	}
+
+	filePath, err := writeCollectionCSV(docs, fieldSet, "things", tmpDir, true)
+	if err != nil {
+		t.Fatalf("writeCollectionCSV() error = %v", err)
+	}
+
+	records := readCSV(t, filePath)
+	if len(records) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(records))
+	}
+
+	// Last header should be __fs_types__
+	headers := records[0]
+	if headers[len(headers)-1] != "__fs_types__" {
+		t.Errorf("last header = %q, want __fs_types__", headers[len(headers)-1])
+	}
+
+	// Parse __fs_types__ for row 1 (doc1 has name, age, active, score, joined)
+	var types1 map[string]string
+	if err := json.Unmarshal([]byte(records[1][len(headers)-1]), &types1); err != nil {
+		t.Fatalf("failed to parse __fs_types__ for row 1: %v", err)
+	}
+	wantTypes1 := map[string]string{
+		"name": "string", "age": "int", "active": "bool",
+		"score": "float", "joined": "timestamp",
+	}
+	for k, v := range wantTypes1 {
+		if types1[k] != v {
+			t.Errorf("row 1 type[%s] = %q, want %q", k, types1[k], v)
+		}
+	}
+
+	// Parse __fs_types__ for row 2 (doc2 has name, age, tags)
+	var types2 map[string]string
+	if err := json.Unmarshal([]byte(records[2][len(headers)-1]), &types2); err != nil {
+		t.Fatalf("failed to parse __fs_types__ for row 2: %v", err)
+	}
+	if types2["tags"] != "array" {
+		t.Errorf("row 2 type[tags] = %q, want %q", types2["tags"], "array")
+	}
+	// Fields not present in doc2 should not appear in its type map
+	if _, ok := types2["active"]; ok {
+		t.Error("row 2 should not have type for 'active' (field not present)")
+	}
+}
+
+func TestWriteCollectionCSV_WithoutTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	docs := []docRecord{
+		{path: "col/doc1", data: map[string]any{"name": "Alice"}},
+	}
+	fieldSet := map[string]struct{}{"name": {}}
+
+	filePath, err := writeCollectionCSV(docs, fieldSet, "col", tmpDir, false)
+	if err != nil {
+		t.Fatalf("writeCollectionCSV() error = %v", err)
+	}
+
+	records := readCSV(t, filePath)
+	headers := records[0]
+	for _, h := range headers {
+		if h == "__fs_types__" {
+			t.Error("__fs_types__ should not be present when withTypes=false")
+		}
 	}
 }
 

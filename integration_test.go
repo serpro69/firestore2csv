@@ -226,7 +226,7 @@ func TestExportSingleCollection(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	results := exportCollectionTree(ctx, client, "users", 0, 0, 0, tmpDir)
+	results := exportCollectionTree(ctx, client, "users", 0, 0, 0, tmpDir, false)
 
 	// depth=0 means top-level only
 	if len(results) != 1 {
@@ -256,7 +256,7 @@ func TestExportWithSubCollections(t *testing.T) {
 	ctx := context.Background()
 
 	// depth=-1 means unlimited recursion
-	results := exportCollectionTree(ctx, client, "users", 0, 0, -1, tmpDir)
+	results := exportCollectionTree(ctx, client, "users", 0, 0, -1, tmpDir, false)
 
 	// Should have users + users/orders + users/orders/items
 	if len(results) < 3 {
@@ -289,7 +289,7 @@ func TestExportDepthLimit(t *testing.T) {
 	ctx := context.Background()
 
 	// depth=1 means users + orders but NOT items
-	results := exportCollectionTree(ctx, client, "users", 0, 0, 1, tmpDir)
+	results := exportCollectionTree(ctx, client, "users", 0, 0, 1, tmpDir, false)
 
 	// Should have users + users/orders only
 	collections := map[string]bool{}
@@ -321,7 +321,7 @@ func TestExportWithLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	results := exportCollectionTree(ctx, client, "users", 1, 0, 0, tmpDir)
+	results := exportCollectionTree(ctx, client, "users", 1, 0, 0, tmpDir, false)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
