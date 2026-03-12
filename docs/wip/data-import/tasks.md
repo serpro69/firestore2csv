@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-03-12
 
 ## Task 1: CLI structure refactor — subcommands and shared connection
@@ -81,10 +81,10 @@
 - [x] 6.5 Heuristic import test: import a CSV without `__fs_types__` column, verify types are correctly inferred via heuristics
 
 ## Task 7: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
 
 ### Subtasks
-- [ ] 7.1 Run `testing-process` skill to verify all tasks — full test suite (unit + integration), edge cases
-- [ ] 7.2 Run `documentation-process` skill to update CLAUDE.md and any other relevant docs
-- [ ] 7.3 Run `solid-code-review go` skill to review the implementation
+- [x] 7.1 Run `testing-process` skill to verify all tasks — full test suite (unit + integration), edge cases
+- [x] 7.2 Run `documentation-process` skill to update CLAUDE.md and any other relevant docs
+- [x] 7.3 Run `solid-code-review go` skill to review the implementation
