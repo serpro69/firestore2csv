@@ -156,6 +156,16 @@ RFC3339 format. Authentication uses Google Application Default Credentials.`,
 	}
 }
 
+type exportConfig struct {
+	project     string
+	database    string
+	collections string
+	limit       int
+	childLimit  int
+	maxDepth    int
+	output      string
+}
+
 func run(cmd *cobra.Command, args []string) error {
 	f := cmd.Flags()
 	project, _ := f.GetString("project")
@@ -166,21 +176,33 @@ func run(cmd *cobra.Command, args []string) error {
 	maxDepth, _ := f.GetInt("depth")
 	output, _ := f.GetString("output")
 
-	fmt.Fprintln(os.Stderr)
-	printInfo("Connecting to project %s (database: %s)", bold(project), bold(database))
+	return runExport(exportConfig{
+		project:     project,
+		database:    database,
+		collections: collections,
+		limit:       limit,
+		childLimit:  childLimit,
+		maxDepth:    maxDepth,
+		output:      output,
+	})
+}
 
-	if err := os.MkdirAll(output, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory %q: %w", output, err)
+func runExport(cfg exportConfig) error {
+	fmt.Fprintln(os.Stderr)
+	printInfo("Connecting to project %s (database: %s)", bold(cfg.project), bold(cfg.database))
+
+	if err := os.MkdirAll(cfg.output, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory %q: %w", cfg.output, err)
 	}
 
 	ctx := context.Background()
-	client, err := firestore.NewClientWithDatabase(ctx, project, database)
+	client, err := firestore.NewClientWithDatabase(ctx, cfg.project, cfg.database)
 	if err != nil {
 		return fmt.Errorf("failed to create Firestore client: %w", err)
 	}
 	defer client.Close()
 
-	collNames, err := resolveCollections(ctx, client, collections)
+	collNames, err := resolveCollections(ctx, client, cfg.collections)
 	if err != nil {
 		return fmt.Errorf("failed to resolve collections: %w", err)
 	}
@@ -190,7 +212,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	var results []exportResult
 	for _, name := range collNames {
-		results = append(results, exportCollectionTree(ctx, client, name, limit, childLimit, maxDepth, output)...)
+		results = append(results, exportCollectionTree(ctx, client, name, cfg.limit, cfg.childLimit, cfg.maxDepth, cfg.output)...)
 	}
 
 	printSummaryTable(results)
@@ -488,7 +510,7 @@ func writeCollectionCSV(docs []docRecord, fieldSet map[string]struct{}, displayP
 	return filePath, nil
 }
 
-func sortedKeys(m map[string][]*firestore.DocumentRef) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
