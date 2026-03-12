@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -824,6 +825,71 @@ users/bob,,25
 	// bob: name is empty → nil → omitted from data
 	if _, ok := records[1].data["name"]; ok {
 		t.Error("bob should not have 'name' key (empty value)")
+	}
+}
+
+func TestDiscoverCSVFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create directory structure with CSV and non-CSV files
+	subDir := filepath.Join(tmpDir, "sub")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(tmpDir, "a.csv"), []byte("data"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte("data"), 0644)
+	os.WriteFile(filepath.Join(subDir, "c.csv"), []byte("data"), 0644)
+	os.WriteFile(filepath.Join(subDir, "d.CSV"), []byte("data"), 0644)
+
+	t.Run("directory input", func(t *testing.T) {
+		files, err := discoverCSVFiles([]string{tmpDir})
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+		if len(files) != 3 { // a.csv, sub/c.csv, sub/d.CSV
+			t.Errorf("expected 3 CSV files, got %d: %v", len(files), files)
+		}
+	})
+
+	t.Run("file input", func(t *testing.T) {
+		files, err := discoverCSVFiles([]string{filepath.Join(tmpDir, "a.csv")})
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+		if len(files) != 1 {
+			t.Errorf("expected 1 file, got %d", len(files))
+		}
+	})
+
+	t.Run("deduplication", func(t *testing.T) {
+		files, err := discoverCSVFiles([]string{tmpDir, filepath.Join(tmpDir, "a.csv")})
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+		if len(files) != 3 {
+			t.Errorf("expected 3 files (deduped), got %d: %v", len(files), files)
+		}
+	})
+
+	t.Run("nonexistent path", func(t *testing.T) {
+		_, err := discoverCSVFiles([]string{"/nonexistent/path"})
+		if err == nil {
+			t.Error("expected error for nonexistent path")
+		}
+	})
+}
+
+func TestRunImportCmd_InvalidConflict(t *testing.T) {
+	root := newTestCommand()
+	// Override import RunE with the real one
+	importCmd, _, _ := root.Find([]string{"import"})
+	importCmd.RunE = runImportCmd
+
+	root.SetArgs([]string{"import", "-e", "localhost:8686", "--on-conflict", "invalid"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --on-conflict")
+	}
+	if !strings.Contains(err.Error(), "invalid --on-conflict") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
