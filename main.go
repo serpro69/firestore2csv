@@ -23,7 +23,7 @@ import (
 )
 
 type docRecord struct {
-	id   string
+	path string
 	data map[string]any
 }
 
@@ -84,6 +84,18 @@ func printOK(format string, a ...any) {
 
 func printErr(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", red("ERROR"), fmt.Sprintf(format, a...))
+}
+
+// documentPath extracts the document path from a Firestore DocumentRef.
+// snap.Ref.Path returns "projects/{project}/databases/{db}/documents/{path}";
+// this function returns just the "{path}" portion.
+func documentPath(ref *firestore.DocumentRef) string {
+	full := ref.Path
+	const marker = "/documents/"
+	if i := strings.Index(full, marker); i >= 0 {
+		return full[i+len(marker):]
+	}
+	return full
 }
 
 // fmtInt formats an integer with comma thousands separators.
@@ -177,8 +189,8 @@ Run 'firestore2csv <command> --help' for details on each command.`,
 		Long: `Export Firestore collections to CSV files.
 
 Each collection is written to a separate CSV file. The first column is always
-__document_id__, and remaining columns are the union of all fields across
-documents in that collection, sorted alphabetically.
+__path__ (the full Firestore document path), and remaining columns are the
+union of all fields across documents in that collection, sorted alphabetically.
 
 Sub-collections are automatically discovered and exported recursively. Output
 files are organized in a directory structure mirroring the collection hierarchy
@@ -452,7 +464,7 @@ func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRe
 		for k := range data {
 			fieldSet[k] = struct{}{}
 		}
-		docs = append(docs, docRecord{id: snap.Ref.ID, data: data})
+		docs = append(docs, docRecord{path: documentPath(snap.Ref), data: data})
 		if recurse {
 			docRefs = append(docRefs, snap.Ref)
 		}
@@ -518,7 +530,7 @@ func readAndExportAggregated(ctx context.Context, parentRefs []*firestore.Docume
 			for k := range data {
 				fieldSet[k] = struct{}{}
 			}
-			docs = append(docs, docRecord{id: snap.Ref.ID, data: data})
+			docs = append(docs, docRecord{path: documentPath(snap.Ref), data: data})
 			if recurse {
 				docRefs = append(docRefs, snap.Ref)
 			}
@@ -579,7 +591,7 @@ func writeCollectionCSV(docs []docRecord, fieldSet map[string]struct{}, displayP
 		fields = append(fields, k)
 	}
 	sort.Strings(fields)
-	headers := append([]string{"__document_id__"}, fields...)
+	headers := append([]string{"__path__"}, fields...)
 
 	filePath := filepath.Join(outputDir, filepath.FromSlash(displayPath)+".csv")
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
@@ -601,7 +613,7 @@ func writeCollectionCSV(docs []docRecord, fieldSet map[string]struct{}, displayP
 
 	for _, doc := range docs {
 		row := make([]string, len(headers))
-		row[0] = doc.id
+		row[0] = doc.path
 		for i, h := range fields {
 			val, ok := doc.data[h]
 			if !ok || val == nil {

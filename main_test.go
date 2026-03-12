@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/csv"
 	"os"
@@ -9,9 +10,33 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/spf13/cobra"
 	"google.golang.org/genproto/googleapis/type/latlng"
 )
+
+func TestDocumentPath(t *testing.T) {
+	client, err := firestore.NewClient(context.Background(), "test-project")
+	if err != nil {
+		t.Skipf("cannot create Firestore client: %v", err)
+	}
+	defer client.Close()
+
+	tests := []struct {
+		ref  *firestore.DocumentRef
+		want string
+	}{
+		{client.Doc("users/alice"), "users/alice"},
+		{client.Doc("users/alice/orders/order1"), "users/alice/orders/order1"},
+		{client.Collection("top").Doc("doc"), "top/doc"},
+	}
+	for _, tt := range tests {
+		got := documentPath(tt.ref)
+		if got != tt.want {
+			t.Errorf("documentPath(%q) = %q, want %q", tt.ref.Path, got, tt.want)
+		}
+	}
+}
 
 func TestFmtInt(t *testing.T) {
 	tests := []struct {
@@ -179,8 +204,8 @@ func TestSortedKeys(t *testing.T) {
 func TestWriteCollectionCSV_Basic(t *testing.T) {
 	tmpDir := t.TempDir()
 	docs := []docRecord{
-		{id: "doc1", data: map[string]any{"name": "Alice", "age": int64(30)}},
-		{id: "doc2", data: map[string]any{"name": "Bob", "age": int64(25)}},
+		{path: "users/doc1", data: map[string]any{"name": "Alice", "age": int64(30)}},
+		{path: "users/doc2", data: map[string]any{"name": "Bob", "age": int64(25)}},
 	}
 	fieldSet := map[string]struct{}{"name": {}, "age": {}}
 
@@ -199,17 +224,17 @@ func TestWriteCollectionCSV_Basic(t *testing.T) {
 		t.Fatalf("expected 3 rows (header + 2), got %d", len(records))
 	}
 
-	// Headers: __document_id__, age, name (sorted)
-	wantHeaders := []string{"__document_id__", "age", "name"}
+	// Headers: __path__, age, name (sorted)
+	wantHeaders := []string{"__path__", "age", "name"}
 	for i, h := range wantHeaders {
 		if records[0][i] != h {
 			t.Errorf("header[%d] = %q, want %q", i, records[0][i], h)
 		}
 	}
 
-	// Row 1: doc1, 30, Alice
-	if records[1][0] != "doc1" || records[1][1] != "30" || records[1][2] != "Alice" {
-		t.Errorf("row 1 = %v, want [doc1 30 Alice]", records[1])
+	// Row 1: users/doc1, 30, Alice
+	if records[1][0] != "users/doc1" || records[1][1] != "30" || records[1][2] != "Alice" {
+		t.Errorf("row 1 = %v, want [users/doc1 30 Alice]", records[1])
 	}
 }
 
@@ -231,7 +256,7 @@ func TestWriteCollectionCSV_EmptyDocs(t *testing.T) {
 func TestWriteCollectionCSV_NestedPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	docs := []docRecord{
-		{id: "order1", data: map[string]any{"total": float64(99.99)}},
+		{path: "users/alice/orders/order1", data: map[string]any{"total": float64(99.99)}},
 	}
 	fieldSet := map[string]struct{}{"total": {}}
 
@@ -253,8 +278,8 @@ func TestWriteCollectionCSV_NestedPath(t *testing.T) {
 func TestWriteCollectionCSV_MissingFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	docs := []docRecord{
-		{id: "doc1", data: map[string]any{"a": "val_a"}},
-		{id: "doc2", data: map[string]any{"b": "val_b"}},
+		{path: "sparse/doc1", data: map[string]any{"a": "val_a"}},
+		{path: "sparse/doc2", data: map[string]any{"b": "val_b"}},
 	}
 	fieldSet := map[string]struct{}{"a": {}, "b": {}}
 
@@ -283,8 +308,8 @@ func TestWriteCollectionCSV_MissingFields(t *testing.T) {
 func TestWriteCollectionCSV_SpecialCharacters(t *testing.T) {
 	tmpDir := t.TempDir()
 	docs := []docRecord{
-		{id: "doc1", data: map[string]any{"text": "hello, \"world\""}},
-		{id: "doc2", data: map[string]any{"text": "line1\nline2"}},
+		{path: "special/doc1", data: map[string]any{"text": "hello, \"world\""}},
+		{path: "special/doc2", data: map[string]any{"text": "line1\nline2"}},
 	}
 	fieldSet := map[string]struct{}{"text": {}}
 
