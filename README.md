@@ -12,10 +12,11 @@ A CLI tool to export Google Cloud Firestore collections to CSV files.
 
 ## Usage
 
-Run directly without building a binary:
+Install and run:
 
 ```bash
-go run . -p <project-id> [flags]
+go install github.com/serpro69/firestore2csv
+firestore2csv -p <project-id> [flags]
 ```
 
 Or build and run:
@@ -25,15 +26,21 @@ go build -o firestore2csv .
 ./firestore2csv -p <project-id> [flags]
 ```
 
+Or run directly without installing/building a binary:
+
+```bash
+go run . -p <project-id> [flags]
+```
+
 ### Flags
 
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--project` | `-p` | *(required)* | GCP project ID |
-| `--database` | `-d` | `(default)` | Firestore database name |
-| `--collections` | `-c` | *(all)* | Comma-separated collection names to export |
-| `--limit` | `-l` | `0` (all) | Max documents per collection |
-| `--output` | `-o` | `.` | Output directory for CSV files |
+| Flag            | Short | Default      | Description                                |
+| --------------- | ----- | ------------ | ------------------------------------------ |
+| `--project`     | `-p`  | _(required)_ | GCP project ID                             |
+| `--database`    | `-d`  | `(default)`  | Firestore database name                    |
+| `--collections` | `-c`  | _(all)_      | Comma-separated collection names to export |
+| `--limit`       | `-l`  | `0` (all)    | Max documents per collection               |
+| `--output`      | `-o`  | `.`          | Output directory for CSV files             |
 
 ### Examples
 
@@ -64,13 +71,13 @@ go run . -p my-project -d my-db -o ./export
 
 ### Data type mapping
 
-| Firestore Type | CSV Representation |
-|---|---|
-| String, Number, Boolean | Plain value |
-| Null | Empty string |
-| Timestamp | RFC3339Nano (`2024-01-15T10:30:00.123456789Z`) |
-| Array | JSON string (`[1,"two",3]`) |
-| Map | JSON string (`{"key":"value"}`) |
-| GeoPoint | JSON string (`{"lat":12.34,"lng":56.78}`) |
-| Bytes | Base64-encoded string |
-| Reference | Document path (`projects/p/databases/d/documents/col/doc`) |
+| Firestore Type          | CSV Representation                                         |
+| ----------------------- | ---------------------------------------------------------- |
+| String, Number, Boolean | Plain value                                                |
+| Null                    | Empty string                                               |
+| Timestamp               | RFC3339Nano (`2024-01-15T10:30:00.123456789Z`)             |
+| Array                   | JSON string (`[1,"two",3]`)                                |
+| Map                     | JSON string (`{"key":"value"}`)                            |
+| GeoPoint                | JSON string (`{"lat":12.34,"lng":56.78}`)                  |
+| Bytes                   | Base64-encoded string                                      |
+| Reference               | Document path (`projects/p/databases/d/documents/col/doc`) |

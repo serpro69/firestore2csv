@@ -1,4 +1,4 @@
-module firestore2csv
+module github.com/serpro69/firestore2csv
 
 go 1.25.2
 
