@@ -118,3 +118,38 @@ level of sub-collections, `-1` = unlimited).
 | GeoPoint                | JSON string (`{"lat":12.34,"lng":56.78}`)                  |
 | Bytes                   | Base64-encoded string                                      |
 | Reference               | Document path (`projects/p/databases/d/documents/col/doc`) |
+
+## Testing
+
+### Unit tests
+
+Unit tests cover pure functions (value formatting, CSV writing, etc.) and require no external services:
+
+```bash
+go test -v ./...
+```
+
+### Integration tests
+
+Integration tests run against a local [Firebase Firestore Emulator](https://firebase.google.com/docs/emulator-suite) and exercise the full export pipeline — collection resolution, recursive sub-collection export, depth/limit controls, and CSV output.
+
+**Prerequisites:** [Firebase CLI](https://firebase.google.com/docs/cli) (`npm install -g firebase-tools`)
+
+Run with Make (starts and stops the emulator automatically):
+
+```bash
+make test-integration
+```
+
+Or run all tests (unit + integration):
+
+```bash
+make test-all
+```
+
+To run manually:
+
+```bash
+firebase emulators:start --only firestore --project test-project &
+FIRESTORE_EMULATOR_HOST=localhost:8686 go test -v -tags integration -count=1 ./...
+```
