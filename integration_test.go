@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/iterator"
 	"google.golang.org/genproto/googleapis/type/latlng"
 )
 
@@ -136,8 +139,9 @@ func cleanFirestore(t *testing.T, client *firestore.Client) {
 	t.Helper()
 	ctx := context.Background()
 
-	deleteCollection(ctx, t, client, client.Collection("users"))
-	deleteCollection(ctx, t, client, client.Collection("products"))
+	for _, name := range []string{"users", "products", "imported_users", "imported_products", "target", "heuristic_target"} {
+		deleteCollection(ctx, t, client, client.Collection(name))
+	}
 }
 
 func deleteCollection(ctx context.Context, t *testing.T, client *firestore.Client, col *firestore.CollectionRef) {
@@ -386,4 +390,443 @@ func TestRunExport_FullPipeline(t *testing.T) {
 			t.Errorf("expected file %s to exist", path)
 		}
 	}
+}
+
+// --- Import integration tests ---
+
+// rewriteCSVPaths reads a CSV file and rewrites the __path__ column to use
+// a different collection prefix. Returns the path to the rewritten CSV.
+func rewriteCSVPaths(t *testing.T, srcPath, oldPrefix, newPrefix, destDir string) string {
+	t.Helper()
+	records := readTestCSV(t, srcPath)
+	if len(records) < 1 {
+		t.Fatalf("CSV %s has no rows", srcPath)
+	}
+
+	// Find __path__ column
+	pathIdx := -1
+	for i, h := range records[0] {
+		if h == "__path__" {
+			pathIdx = i
+			break
+		}
+	}
+	if pathIdx < 0 {
+		t.Fatalf("CSV %s missing __path__ column", srcPath)
+	}
+
+	// Rewrite paths
+	for i := 1; i < len(records); i++ {
+		records[i][pathIdx] = strings.Replace(records[i][pathIdx], oldPrefix, newPrefix, 1)
+	}
+
+	destPath := filepath.Join(destDir, filepath.Base(srcPath))
+	f, err := os.Create(destPath)
+	if err != nil {
+		t.Fatalf("creating %s: %v", destPath, err)
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	w.WriteAll(records)
+	w.Flush()
+	return destPath
+}
+
+// readAllDocs reads all documents from a collection path in Firestore.
+func readAllDocs(t *testing.T, client *firestore.Client, collectionPath string) map[string]map[string]any {
+	t.Helper()
+	ctx := context.Background()
+	docs, err := client.Collection(collectionPath).Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("reading collection %s: %v", collectionPath, err)
+	}
+	result := make(map[string]map[string]any, len(docs))
+	for _, doc := range docs {
+		result[doc.Ref.ID] = doc.Data()
+	}
+	return result
+}
+
+func TestImportRoundTrip(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+
+	// Step 1: Export users with --with-types
+	exportDir := t.TempDir()
+	err := runExport(exportConfig{
+		project:     testProject,
+		database:    "(default)",
+		collections: "users",
+		maxDepth:    0,
+		output:      exportDir,
+		withTypes:   true,
+	})
+	if err != nil {
+		t.Fatalf("export error: %v", err)
+	}
+
+	// Step 2: Rewrite paths from users/* to imported_users/*
+	importDir := t.TempDir()
+	rewriteCSVPaths(t, filepath.Join(exportDir, "users.csv"), "users/", "imported_users/", importDir)
+
+	// Step 3: Import into imported_users collection
+	err = runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+		inputs:     []string{importDir},
+		onConflict: "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	// Step 4: Read back and compare
+	origDocs := readAllDocs(t, client, "users")
+	importedDocs := readAllDocs(t, client, "imported_users")
+
+	if len(importedDocs) != len(origDocs) {
+		t.Fatalf("imported %d docs, want %d", len(importedDocs), len(origDocs))
+	}
+
+	for id, orig := range origDocs {
+		imported, ok := importedDocs[id]
+		if !ok {
+			t.Errorf("missing imported doc %s", id)
+			continue
+		}
+		// Compare field values
+		for k, origVal := range orig {
+			importedVal, ok := imported[k]
+			if !ok {
+				t.Errorf("doc %s: missing field %s", id, k)
+				continue
+			}
+			// Compare by formatted value (handles type differences like time.Time)
+			if formatValue(origVal) != formatValue(importedVal) {
+				t.Errorf("doc %s field %s: got %v (%T), want %v (%T)",
+					id, k, importedVal, importedVal, origVal, origVal)
+			}
+		}
+	}
+}
+
+func TestImportConflictSkip(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+	ctx := context.Background()
+
+	// Pre-create a document in the target collection
+	targetDoc := map[string]any{"name": "Original", "age": int64(99)}
+	client.Collection("target").Doc("doc1").Set(ctx, targetDoc)
+
+	// Create CSV with a conflicting doc and a new doc
+	importDir := t.TempDir()
+	csvContent := "__path__,name,age\ntarget/doc1,Replacement,50\ntarget/doc2,NewDoc,25\n"
+	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
+
+	err := runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+
+		inputs:     []string{importDir},
+		onConflict: "skip",
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	// doc1 should still have original data (skipped)
+	doc1, err := client.Collection("target").Doc("doc1").Get(ctx)
+	if err != nil {
+		t.Fatalf("reading doc1: %v", err)
+	}
+	if doc1.Data()["name"] != "Original" {
+		t.Errorf("doc1.name = %v, want Original (should have been skipped)", doc1.Data()["name"])
+	}
+
+	// doc2 should exist (new)
+	doc2, err := client.Collection("target").Doc("doc2").Get(ctx)
+	if err != nil {
+		t.Fatalf("reading doc2: %v", err)
+	}
+	if doc2.Data()["name"] != "NewDoc" {
+		t.Errorf("doc2.name = %v, want NewDoc", doc2.Data()["name"])
+	}
+}
+
+func TestImportConflictOverwrite(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+	ctx := context.Background()
+
+	// Pre-create a document
+	client.Collection("target").Doc("doc1").Set(ctx, map[string]any{"name": "Original", "extra": "field"})
+
+	importDir := t.TempDir()
+	csvContent := "__path__,name,age\ntarget/doc1,Replaced,42\n"
+	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
+
+	err := runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+
+		inputs:     []string{importDir},
+		onConflict: "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	doc1, err := client.Collection("target").Doc("doc1").Get(ctx)
+	if err != nil {
+		t.Fatalf("reading doc1: %v", err)
+	}
+	data := doc1.Data()
+	if data["name"] != "Replaced" {
+		t.Errorf("doc1.name = %v, want Replaced", data["name"])
+	}
+	// "extra" field should be gone (overwrite replaces entire doc)
+	if _, ok := data["extra"]; ok {
+		t.Error("doc1 should not have 'extra' field after overwrite")
+	}
+}
+
+func TestImportConflictMerge(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+	ctx := context.Background()
+
+	// Pre-create a document with an extra field
+	client.Collection("target").Doc("doc1").Set(ctx, map[string]any{"name": "Original", "extra": "kept"})
+
+	importDir := t.TempDir()
+	csvContent := "__path__,name,age\ntarget/doc1,Merged,42\n"
+	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
+
+	err := runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+
+		inputs:     []string{importDir},
+		onConflict: "merge",
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	doc1, err := client.Collection("target").Doc("doc1").Get(ctx)
+	if err != nil {
+		t.Fatalf("reading doc1: %v", err)
+	}
+	data := doc1.Data()
+	if data["name"] != "Merged" {
+		t.Errorf("doc1.name = %v, want Merged", data["name"])
+	}
+	// "extra" field should be preserved (merge keeps existing fields)
+	if data["extra"] != "kept" {
+		t.Errorf("doc1.extra = %v, want kept", data["extra"])
+	}
+}
+
+func TestImportConflictFail(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+	ctx := context.Background()
+
+	// Pre-create a conflicting document
+	client.Collection("target").Doc("doc1").Set(ctx, map[string]any{"name": "Existing"})
+
+	importDir := t.TempDir()
+	csvContent := "__path__,name\ntarget/doc1,New\ntarget/doc2,AlsoNew\n"
+	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
+
+	err := runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+
+		inputs:     []string{importDir},
+		onConflict: "fail",
+	})
+	if err == nil {
+		t.Fatal("expected error for conflict with --on-conflict=fail")
+	}
+	if !strings.Contains(err.Error(), "conflicting") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// doc2 should NOT have been written (abort before writing)
+	_, err = client.Collection("target").Doc("doc2").Get(ctx)
+	if err == nil {
+		t.Error("doc2 should not exist — import should have aborted before writing")
+	}
+}
+
+func TestImportSubCollectionRoundTrip(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+
+	// Export users with sub-collections and types
+	exportDir := t.TempDir()
+	err := runExport(exportConfig{
+		project:     testProject,
+		database:    "(default)",
+		collections: "users",
+		maxDepth:    -1,
+		output:      exportDir,
+		withTypes:   true,
+	})
+	if err != nil {
+		t.Fatalf("export error: %v", err)
+	}
+
+	// Rewrite all exported CSVs to use imported_users prefix
+	importDir := t.TempDir()
+	rewriteCSVPaths(t, filepath.Join(exportDir, "users.csv"), "users/", "imported_users/", importDir)
+
+	ordersDir := filepath.Join(importDir, "users")
+	os.MkdirAll(ordersDir, 0755)
+	rewriteCSVPaths(t, filepath.Join(exportDir, "users", "orders.csv"), "users/", "imported_users/", ordersDir)
+
+	itemsDir := filepath.Join(importDir, "users", "orders")
+	os.MkdirAll(itemsDir, 0755)
+	rewriteCSVPaths(t, filepath.Join(exportDir, "users", "orders", "items.csv"), "users/", "imported_users/", itemsDir)
+
+	// Import
+	err = runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+		inputs:     []string{importDir},
+		onConflict: "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	// Verify top-level docs
+	importedUsers := readAllDocs(t, client, "imported_users")
+	if len(importedUsers) != 3 {
+		t.Errorf("expected 3 imported users, got %d", len(importedUsers))
+	}
+
+	// Verify sub-collection: imported_users/user1/orders
+	ctx := context.Background()
+	orderDocs, err := client.Collection("imported_users").Doc("user1").Collection("orders").Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("reading orders: %v", err)
+	}
+	if len(orderDocs) != 2 {
+		t.Errorf("expected 2 orders for user1, got %d", len(orderDocs))
+	}
+
+	// Verify sub-sub-collection: imported_users/user1/orders/order1/items
+	itemDocs, err := client.Collection("imported_users").Doc("user1").Collection("orders").Doc("order1").Collection("items").Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("reading items: %v", err)
+	}
+	if len(itemDocs) != 1 {
+		t.Errorf("expected 1 item for order1, got %d", len(itemDocs))
+	}
+}
+
+func TestImportDryRun(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+
+	importDir := t.TempDir()
+	csvContent := "__path__,name\ntarget/dry1,A\ntarget/dry2,B\n"
+	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
+
+	err := runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+
+		inputs:     []string{importDir},
+		onConflict: "skip",
+		dryRun:     true,
+	})
+	if err != nil {
+		t.Fatalf("dry-run error: %v", err)
+	}
+
+	// Verify nothing was written
+	ctx := context.Background()
+	docs, err := client.Collection("target").Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("reading target collection: %v", err)
+	}
+	// Filter for dry1/dry2 specifically
+	for _, doc := range docs {
+		if doc.Ref.ID == "dry1" || doc.Ref.ID == "dry2" {
+			t.Errorf("document %s should not exist after dry-run", doc.Ref.ID)
+		}
+	}
+}
+
+func TestImportHeuristic(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+
+	// CSV without __fs_types__ — types inferred by heuristic
+	importDir := t.TempDir()
+	csvContent := `__path__,name,age,active,score,created
+heuristic_target/doc1,Alice,30,true,9.5,2024-06-15T12:00:00Z
+`
+	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
+
+	err := runImport(importConfig{
+		project:    testProject,
+		database:   "(default)",
+
+		inputs:     []string{importDir},
+		onConflict: "overwrite",
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	ctx := context.Background()
+	doc, err := client.Collection("heuristic_target").Doc("doc1").Get(ctx)
+	if err != nil {
+		t.Fatalf("reading doc: %v", err)
+	}
+	data := doc.Data()
+
+	// Verify heuristic type detection
+	if data["name"] != "Alice" {
+		t.Errorf("name = %v, want Alice", data["name"])
+	}
+	if data["age"] != int64(30) {
+		t.Errorf("age = %v (%T), want int64(30)", data["age"], data["age"])
+	}
+	if data["active"] != true {
+		t.Errorf("active = %v, want true", data["active"])
+	}
+	if data["score"] != float64(9.5) {
+		t.Errorf("score = %v (%T), want float64(9.5)", data["score"], data["score"])
+	}
+	if ts, ok := data["created"].(time.Time); !ok {
+		t.Errorf("created = %v (%T), want time.Time", data["created"], data["created"])
+	} else if !ts.Equal(time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)) {
+		t.Errorf("created = %v, want 2024-06-15T12:00:00Z", ts)
+	}
+}
+
+// collectSubCollectionNames returns sorted names of sub-collections under a document.
+func collectSubCollectionNames(t *testing.T, ref *firestore.DocumentRef) []string {
+	t.Helper()
+	ctx := context.Background()
+	var names []string
+	iter := ref.Collections(ctx)
+	for {
+		col, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			t.Fatalf("listing sub-collections: %v", err)
+		}
+		names = append(names, col.ID)
+	}
+	sort.Strings(names)
+	return names
 }
