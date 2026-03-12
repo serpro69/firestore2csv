@@ -55,18 +55,18 @@
 - [x] 4.6 Write unit tests for `parseCSVFile()` — CSV with and without `__fs_types__`, mixed types across rows, missing values, empty `__fs_types__` cells
 
 ## Task 5: Import — orchestration, conflict handling, and dry-run
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 4
 - **Docs:** [implementation.md — Phase 3.2 through 3.5](./implementation.md#32-import-orchestration)
 
 ### Subtasks
-- [ ] 5.1 Create `importConfig` struct in `main.go` with fields: `project`, `database`, `emulator`, `inputs` ([]string), `onConflict` (string), `dryRun` (bool)
-- [ ] 5.2 Create `discoverCSVFiles(inputs []string) ([]string, error)` — for each input, if directory → recursively glob `**/*.csv`, if file → use directly. Return deduplicated list of CSV paths
-- [ ] 5.3 Create `runImport(cfg importConfig) error` — main orchestration: discover CSV files, create Firestore client, parse each CSV via `parseCSVFile()`, write documents with conflict handling, print progress and summary
-- [ ] 5.4 Implement conflict strategies in the write loop: `skip` (check existence with `doc.Get()`, log notice if exists), `overwrite` (`doc.Set()`), `merge` (`doc.Set()` with `MergeAll`), `fail` (pre-check all documents, abort if any exist)
-- [ ] 5.5 Implement dry-run mode: skip Firestore writes, print summary of what would happen (collections, document counts, conflicts, type warnings)
-- [ ] 5.6 Wire the `import` subcommand's `RunE` in `main()`: read flags, validate `--on-conflict` value, build `importConfig`, call `runImport()`
-- [ ] 5.7 Handle `ref` type during write: when a field has type `ref`, convert the path string to a `*firestore.DocumentRef` using the Firestore client before writing
+- [x] 5.1 Create `importConfig` struct in `main.go` with fields: `project`, `database`, `emulator`, `inputs` ([]string), `onConflict` (string), `dryRun` (bool)
+- [x] 5.2 Create `discoverCSVFiles(inputs []string) ([]string, error)` — for each input, if directory → recursively glob `**/*.csv`, if file → use directly. Return deduplicated list of CSV paths
+- [x] 5.3 Create `runImport(cfg importConfig) error` — main orchestration: discover CSV files, create Firestore client, parse each CSV via `parseCSVFile()`, write documents with conflict handling, print progress and summary
+- [x] 5.4 Implement conflict strategies in the write loop: `skip` (check existence with `doc.Get()`, log notice if exists), `overwrite` (`doc.Set()`), `merge` (`doc.Set()` with `MergeAll`), `fail` (pre-check all documents, abort if any exist)
+- [x] 5.5 Implement dry-run mode: skip Firestore writes, print summary of what would happen (collections, document counts, conflicts, type warnings)
+- [x] 5.6 Wire the `import` subcommand's `RunE` in `main()`: read flags, validate `--on-conflict` value, build `importConfig`, call `runImport()`
+- [x] 5.7 Handle `ref` type during write: when a field has type `ref`, convert the path string to a `*firestore.DocumentRef` using the Firestore client before writing
 
 ## Task 6: Import — integration tests
 - **Status:** pending

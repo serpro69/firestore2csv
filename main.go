@@ -211,7 +211,7 @@ RFC3339 format. Authentication uses Google Application Default Credentials.`,
 	ef.StringP("output", "o", ".", "Output directory for CSV files")
 	ef.Bool("with-types", false, "Include __fs_types__ column with Firestore type metadata")
 
-	// Import subcommand (stub)
+	// Import subcommand
 	importCmd := &cobra.Command{
 		Use:   "import",
 		Short: "Import CSV files into Firestore",
@@ -224,9 +224,7 @@ Use --on-conflict to control behavior when documents already exist.
 Use --dry-run to validate without writing.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not yet implemented")
-		},
+		RunE:          runImportCmd,
 	}
 
 	imf := importCmd.Flags()
@@ -803,8 +801,9 @@ func convertForJSON(v any) any {
 // --- Import functions ---
 
 type importRecord struct {
-	path string
-	data map[string]any
+	path      string
+	data      map[string]any
+	refFields map[string]bool // fields that are Firestore document references
 }
 
 // castValue converts a CSV string to the correct Go type based on the type label.
@@ -972,6 +971,7 @@ func parseCSVFile(path string) ([]importRecord, error) {
 		}
 
 		data := make(map[string]any, len(dataFields))
+		var refFields map[string]bool
 		for _, fc := range dataFields {
 			raw := ""
 			if fc.idx < len(row) {
@@ -993,6 +993,12 @@ func parseCSVFile(path string) ([]importRecord, error) {
 					if castErr != nil {
 						return nil, fmt.Errorf("casting field %q (type %q) in row %q: %w", fc.name, typeName, docPath, castErr)
 					}
+					if typeName == "ref" && val != nil {
+						if refFields == nil {
+							refFields = make(map[string]bool)
+						}
+						refFields[fc.name] = true
+					}
 				}
 			} else {
 				var detectErr error
@@ -1008,8 +1014,258 @@ func parseCSVFile(path string) ([]importRecord, error) {
 			data[fc.name] = val
 		}
 
-		records = append(records, importRecord{path: docPath, data: data})
+		records = append(records, importRecord{path: docPath, data: data, refFields: refFields})
 	}
 
 	return records, nil
+}
+
+type importConfig struct {
+	project    string
+	database   string
+	emulator   string
+	inputs     []string
+	onConflict string
+	dryRun     bool
+}
+
+var validConflictStrategies = map[string]bool{
+	"skip": true, "overwrite": true, "merge": true, "fail": true,
+}
+
+func runImportCmd(cmd *cobra.Command, args []string) error {
+	project, database, emulator, err := validateConnectionFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	f := cmd.Flags()
+	inputs, _ := f.GetStringSlice("input")
+	onConflict, _ := f.GetString("on-conflict")
+	dryRun, _ := f.GetBool("dry-run")
+
+	if !validConflictStrategies[onConflict] {
+		return fmt.Errorf("invalid --on-conflict value %q: must be one of skip, overwrite, merge, fail", onConflict)
+	}
+
+	return runImport(importConfig{
+		project:    project,
+		database:   database,
+		emulator:   emulator,
+		inputs:     inputs,
+		onConflict: onConflict,
+		dryRun:     dryRun,
+	})
+}
+
+// discoverCSVFiles resolves input paths to a list of CSV file paths.
+func discoverCSVFiles(inputs []string) ([]string, error) {
+	seen := make(map[string]bool)
+	var files []string
+
+	for _, input := range inputs {
+		info, err := os.Stat(input)
+		if err != nil {
+			return nil, fmt.Errorf("cannot access %q: %w", input, err)
+		}
+
+		if !info.IsDir() {
+			abs, _ := filepath.Abs(input)
+			if !seen[abs] {
+				seen[abs] = true
+				files = append(files, input)
+			}
+			continue
+		}
+
+		err = filepath.WalkDir(input, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if strings.ToLower(filepath.Ext(path)) == ".csv" {
+				abs, _ := filepath.Abs(path)
+				if !seen[abs] {
+					seen[abs] = true
+					files = append(files, path)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("walking directory %q: %w", input, err)
+		}
+	}
+
+	return files, nil
+}
+
+type importSummary struct {
+	written  int
+	skipped  int
+	failed   int
+	dryRun   int
+	total    int
+}
+
+func runImport(cfg importConfig) error {
+	fmt.Fprintln(os.Stderr)
+
+	// Step 1: Discover CSV files
+	csvFiles, err := discoverCSVFiles(cfg.inputs)
+	if err != nil {
+		return err
+	}
+	if len(csvFiles) == 0 {
+		return fmt.Errorf("no CSV files found in the specified inputs")
+	}
+
+	displayProject := cfg.project
+	if cfg.emulator != "" {
+		displayProject = fmt.Sprintf("emulator @ %s", cfg.emulator)
+	}
+	mode := cfg.onConflict
+	if cfg.dryRun {
+		mode += " (dry-run)"
+	}
+	printInfo("Importing to %s (database: %s, conflict: %s)", bold(displayProject), bold(cfg.database), bold(mode))
+	printInfo("Found %d CSV file(s)", len(csvFiles))
+	fmt.Fprintln(os.Stderr)
+
+	// Step 2: Parse all CSV files
+	var allRecords []importRecord
+	for _, csvFile := range csvFiles {
+		records, err := parseCSVFile(csvFile)
+		if err != nil {
+			return fmt.Errorf("parsing %s: %w", csvFile, err)
+		}
+		printOK("Parsed %q — %d record(s)", csvFile, len(records))
+		allRecords = append(allRecords, records...)
+	}
+
+	if len(allRecords) == 0 {
+		printInfo("No records to import.")
+		return nil
+	}
+
+	// Step 3: Create Firestore client (skip for dry-run)
+	ctx := context.Background()
+	var client *firestore.Client
+	if !cfg.dryRun {
+		client, err = newFirestoreClient(ctx, cfg.project, cfg.database, cfg.emulator)
+		if err != nil {
+			return fmt.Errorf("failed to create Firestore client: %w", err)
+		}
+		defer client.Close()
+	}
+
+	// Step 4: Conflict handling and writing
+	summary := importSummary{total: len(allRecords)}
+
+	// For "fail" strategy, pre-check all documents first
+	if cfg.onConflict == "fail" && !cfg.dryRun {
+		var conflicts []string
+		for _, rec := range allRecords {
+			docRef := client.Doc(rec.path)
+			_, err := docRef.Get(ctx)
+			if err == nil {
+				conflicts = append(conflicts, rec.path)
+			}
+		}
+		if len(conflicts) > 0 {
+			printErr("Found %d existing document(s) — aborting import:", len(conflicts))
+			for _, p := range conflicts {
+				fmt.Fprintf(os.Stderr, "  - %s\n", p)
+			}
+			return fmt.Errorf("import aborted: %d conflicting document(s)", len(conflicts))
+		}
+	}
+
+	for _, rec := range allRecords {
+		if cfg.dryRun {
+			summary.dryRun++
+			continue
+		}
+
+		// Convert ref fields from path strings to DocumentRefs
+		writeData := rec.data
+		if len(rec.refFields) > 0 {
+			writeData = make(map[string]any, len(rec.data))
+			for k, v := range rec.data {
+				if rec.refFields[k] {
+					if s, ok := v.(string); ok {
+						writeData[k] = client.Doc(s)
+						continue
+					}
+				}
+				writeData[k] = v
+			}
+		}
+
+		docRef := client.Doc(rec.path)
+
+		switch cfg.onConflict {
+		case "skip":
+			_, err := docRef.Get(ctx)
+			if err == nil {
+				// Document exists, skip it
+				fmt.Fprintf(os.Stderr, "  %s  %s (already exists, skipped)\n", faint("⊘"), rec.path)
+				summary.skipped++
+				continue
+			}
+			_, err = docRef.Set(ctx, writeData)
+		case "overwrite":
+			_, err = docRef.Set(ctx, writeData)
+		case "merge":
+			_, err = docRef.Set(ctx, writeData, firestore.MergeAll)
+		case "fail":
+			// Pre-check already done above, just write
+			_, err = docRef.Set(ctx, writeData)
+		}
+
+		if err != nil {
+			printErr("Failed to write %s: %v", rec.path, err)
+			summary.failed++
+			continue
+		}
+		summary.written++
+	}
+
+	// Step 6: Print summary
+	fmt.Fprintln(os.Stderr)
+	if cfg.dryRun {
+		// Group by collection for dry-run report
+		collections := make(map[string]int)
+		for _, rec := range allRecords {
+			parts := strings.Split(rec.path, "/")
+			if len(parts) >= 2 {
+				// Collection is everything except the last segment
+				colPath := strings.Join(parts[:len(parts)-1], "/")
+				collections[colPath]++
+			}
+		}
+		printInfo("Dry-run summary:")
+		for _, col := range sortedKeys(collections) {
+			fmt.Fprintf(os.Stderr, "  %s: %d document(s)\n", col, collections[col])
+		}
+		fmt.Fprintf(os.Stderr, "\n%s Would import %d document(s) total. No changes were made.\n",
+			green("✓"), summary.dryRun)
+	} else {
+		parts := []string{fmt.Sprintf("%d written", summary.written)}
+		if summary.skipped > 0 {
+			parts = append(parts, fmt.Sprintf("%d skipped", summary.skipped))
+		}
+		if summary.failed > 0 {
+			parts = append(parts, fmt.Sprintf("%d failed", summary.failed))
+		}
+		fmt.Fprintf(os.Stderr, "%s Import complete: %s (total: %d)\n",
+			green("✓"), strings.Join(parts, ", "), summary.total)
+	}
+
+	if summary.failed > 0 {
+		return fmt.Errorf("import completed with %d error(s)", summary.failed)
+	}
+	return nil
 }
