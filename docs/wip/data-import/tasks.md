@@ -87,3 +87,4 @@
 ### Subtasks
 - [ ] 7.1 Run `testing-process` skill to verify all tasks — full test suite (unit + integration), edge cases
 - [ ] 7.2 Run `documentation-process` skill to update CLAUDE.md and any other relevant docs
+- [ ] 7.3 Run `solid-code-review go` skill to review the implementation
