@@ -6,16 +6,16 @@
 > Created: 2026-03-12
 
 ## Task 1: CLI structure refactor — subcommands and shared connection
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md — Phase 1](./implementation.md#phase-1-cli-structure-refactor)
 
 ### Subtasks
-- [ ] 1.1 Refactor `main()` in `main.go`: replace the single root `cobra.Command` with a root command (no `RunE`, prints help) and an `export` subcommand that carries all current flags and the existing `run` function as its `RunE`
-- [ ] 1.2 Add `--emulator` / `-e` flag and `--project` / `-p` flag as shared flags on both subcommands. Add validation: exactly one of `--project` or `--emulator` must be provided
-- [ ] 1.3 Extract Firestore client creation from `runExport()` into a shared `newFirestoreClient(ctx, project, database, emulator string) (*firestore.Client, error)` function. When `emulator` is set, call `os.Setenv("FIRESTORE_EMULATOR_HOST", emulator)` and use a placeholder project ID
-- [ ] 1.4 Add a stub `import` subcommand with its flags (`--input`, `--on-conflict`, `--dry-run`) and a placeholder `RunE` that returns `"not yet implemented"`
-- [ ] 1.5 Update existing unit tests in `main_test.go` and integration tests in `integration_test.go` to work with the refactored structure. Verify all existing tests pass
+- [x] 1.1 Refactor `main()` in `main.go`: replace the single root `cobra.Command` with a root command (no `RunE`, prints help) and an `export` subcommand that carries all current flags and the existing `run` function as its `RunE`
+- [x] 1.2 Add `--emulator` / `-e` flag and `--project` / `-p` flag as shared flags on both subcommands. Add validation: exactly one of `--project` or `--emulator` must be provided
+- [x] 1.3 Extract Firestore client creation from `runExport()` into a shared `newFirestoreClient(ctx, project, database, emulator string) (*firestore.Client, error)` function. When `emulator` is set, call `os.Setenv("FIRESTORE_EMULATOR_HOST", emulator)` and use a placeholder project ID
+- [x] 1.4 Add a stub `import` subcommand with its flags (`--input`, `--on-conflict`, `--dry-run`) and a placeholder `RunE` that returns `"not yet implemented"`
+- [x] 1.5 Update existing unit tests in `main_test.go` and integration tests in `integration_test.go` to work with the refactored structure. Verify all existing tests pass
 
 ## Task 2: Export format — replace `__document_id__` with `__path__`
 - **Status:** pending
