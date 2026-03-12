@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,36 @@ type exportResult struct {
 	fieldCount int
 	filePath   string
 	err        error
+}
+
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	// Local builds have VCS info; prefer commit hash
+	var revision, dirty string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if revision != "" {
+		if len(revision) > 7 {
+			revision = revision[:7]
+		}
+		return revision + dirty
+	}
+	// go install module@version sets Main.Version (e.g. "v1.2.3")
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	return "dev"
 }
 
 var (
@@ -134,6 +165,7 @@ files are organized in a directory structure mirroring the collection hierarchy
 
 Complex types (arrays, maps) are stored as JSON strings. Timestamps use
 RFC3339 format. Authentication uses Google Application Default Credentials.`,
+		Version:       buildVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE:          run,
