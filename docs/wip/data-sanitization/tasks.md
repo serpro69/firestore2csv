@@ -29,15 +29,15 @@
 - [x] 2.4 Add tests for seed determinism (same seed = same output) and seed=0 randomness (different output)
 
 ## Task 3: Export integration
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#export-integration](./implementation.md#export-integration)
 
 ### Subtasks
-- [ ] 3.1 Add `--sanitize` (string) and `--seed` (int64) flags to the `export` subcommand in `main()`
-- [ ] 3.2 Add `sanitizer *sanitizer` field to `exportConfig`
-- [ ] 3.3 In `run()`, parse `--sanitize` flag and construct sanitizer if non-empty, set it on `exportConfig`
-- [ ] 3.4 Thread sanitizer through `runExport` → `exportCollectionTree` → `exportSubCollectionTree` → `readAndExportCollection` / `readAndExportAggregated` — apply `sanitizeRecord` on each `docRecord.data` before calling `writeCollectionCSV`
+- [x] 3.1 Add `--sanitize` (string) and `--seed` (int64) flags to the `export` subcommand in `main()`
+- [x] 3.2 Add `sanitizer *sanitizer` field to `exportConfig`
+- [x] 3.3 In `run()`, parse `--sanitize` flag and construct sanitizer if non-empty, set it on `exportConfig`
+- [x] 3.4 Thread sanitizer through `runExport` → `exportCollectionTree` → `exportSubCollectionTree` → `readAndExportCollection` / `readAndExportAggregated` — apply `sanitizeRecord` on each `docRecord.data` before calling `writeCollectionCSV`
 
 ## Task 4: Sanitize subcommand
 - **Status:** pending

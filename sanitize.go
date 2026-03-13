@@ -119,8 +119,16 @@ func (s *sanitizer) generate(fakerType string) string {
 
 // sanitizeRecord mutates data in place, replacing string values in fields
 // that match the config. It recurses into nested maps and arrays of maps.
+// Keys are processed in sorted order to ensure deterministic output with seeded fakers.
 func (s *sanitizer) sanitizeRecord(data map[string]any) {
-	for key, val := range data {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		val := data[key]
 		if fakerType, ok := s.fields[key]; ok {
 			if _, isStr := val.(string); isStr {
 				data[key] = s.generate(fakerType)

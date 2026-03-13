@@ -210,6 +210,8 @@ RFC3339 format. Authentication uses Google Application Default Credentials.`,
 	ef.Int("depth", -1, "Max sub-collection depth (-1 = unlimited, 0 = top-level only)")
 	ef.StringP("output", "o", ".", "Output directory for CSV files")
 	ef.Bool("with-types", false, "Include __fs_types__ column with Firestore type metadata")
+	ef.String("sanitize", "", "Sanitize fields: inline key=type pairs or path to YAML config file")
+	ef.Int64("seed", 0, "Random seed for sanitization (0 = random, non-zero = deterministic)")
 
 	// Import subcommand
 	importCmd := &cobra.Command{
@@ -251,6 +253,7 @@ type exportConfig struct {
 	maxDepth    int
 	output      string
 	withTypes   bool
+	sanitizer   *sanitizer
 }
 
 // validateConnectionFlags ensures exactly one of --project or --emulator is provided.
@@ -291,6 +294,17 @@ func run(cmd *cobra.Command, args []string) error {
 	maxDepth, _ := f.GetInt("depth")
 	output, _ := f.GetString("output")
 	withTypes, _ := f.GetBool("with-types")
+	sanitizeFlag, _ := f.GetString("sanitize")
+	seed, _ := f.GetInt64("seed")
+
+	var san *sanitizer
+	if sanitizeFlag != "" {
+		cfg, err := parseSanitizeConfig(sanitizeFlag)
+		if err != nil {
+			return fmt.Errorf("invalid --sanitize config: %w", err)
+		}
+		san = newSanitizer(cfg, seed)
+	}
 
 	return runExport(exportConfig{
 		project:     project,
@@ -302,6 +316,7 @@ func run(cmd *cobra.Command, args []string) error {
 		maxDepth:    maxDepth,
 		output:      output,
 		withTypes:   withTypes,
+		sanitizer:   san,
 	})
 }
 
@@ -334,7 +349,7 @@ func runExport(cfg exportConfig) error {
 
 	var results []exportResult
 	for _, name := range collNames {
-		results = append(results, exportCollectionTree(ctx, client, name, cfg.limit, cfg.childLimit, cfg.maxDepth, cfg.output, cfg.withTypes)...)
+		results = append(results, exportCollectionTree(ctx, client, name, cfg.limit, cfg.childLimit, cfg.maxDepth, cfg.output, cfg.withTypes, cfg.sanitizer)...)
 	}
 
 	printSummaryTable(results)
@@ -385,11 +400,11 @@ func resolveCollections(ctx context.Context, client *firestore.Client, flagValue
 }
 
 // exportCollectionTree exports a top-level collection and recursively exports its sub-collections.
-func exportCollectionTree(ctx context.Context, client *firestore.Client, name string, limit, childLimit, maxDepth int, outputDir string, withTypes bool) []exportResult {
+func exportCollectionTree(ctx context.Context, client *firestore.Client, name string, limit, childLimit, maxDepth int, outputDir string, withTypes bool, san *sanitizer) []exportResult {
 	colRef := client.Collection(name)
 	recurse := maxDepth != 0
 
-	result, docRefs := readAndExportCollection(ctx, colRef, name, 0, limit, recurse, outputDir, withTypes)
+	result, docRefs := readAndExportCollection(ctx, colRef, name, 0, limit, recurse, outputDir, withTypes, san)
 	results := []exportResult{result}
 	if result.err != nil || !recurse {
 		return results
@@ -403,17 +418,17 @@ func exportCollectionTree(ctx context.Context, client *firestore.Client, name st
 		if nextDepth > 0 {
 			nextDepth--
 		}
-		results = append(results, exportSubCollectionTree(ctx, parentRefs, subName, displayPath, 1, nextDepth, childLimit, outputDir, withTypes)...)
+		results = append(results, exportSubCollectionTree(ctx, parentRefs, subName, displayPath, 1, nextDepth, childLimit, outputDir, withTypes, san)...)
 	}
 
 	return results
 }
 
 // exportSubCollectionTree recursively exports an aggregated sub-collection and its children.
-func exportSubCollectionTree(ctx context.Context, parentRefs []*firestore.DocumentRef, subColName, displayPath string, depth, maxDepth, childLimit int, outputDir string, withTypes bool) []exportResult {
+func exportSubCollectionTree(ctx context.Context, parentRefs []*firestore.DocumentRef, subColName, displayPath string, depth, maxDepth, childLimit int, outputDir string, withTypes bool, san *sanitizer) []exportResult {
 	recurse := maxDepth != 0
 
-	result, docRefs := readAndExportAggregated(ctx, parentRefs, subColName, displayPath, depth, childLimit, recurse, outputDir, withTypes)
+	result, docRefs := readAndExportAggregated(ctx, parentRefs, subColName, displayPath, depth, childLimit, recurse, outputDir, withTypes, san)
 	results := []exportResult{result}
 	if result.err != nil || !recurse {
 		return results
@@ -427,7 +442,7 @@ func exportSubCollectionTree(ctx context.Context, parentRefs []*firestore.Docume
 		if nextDepth > 0 {
 			nextDepth--
 		}
-		results = append(results, exportSubCollectionTree(ctx, refs, subSubName, subDisplayPath, depth+1, nextDepth, childLimit, outputDir, withTypes)...)
+		results = append(results, exportSubCollectionTree(ctx, refs, subSubName, subDisplayPath, depth+1, nextDepth, childLimit, outputDir, withTypes, san)...)
 	}
 
 	return results
@@ -435,7 +450,7 @@ func exportSubCollectionTree(ctx context.Context, parentRefs []*firestore.Docume
 
 // readAndExportCollection reads documents from a single collection ref and writes a CSV.
 // If recurse is true, it returns the document refs for sub-collection discovery.
-func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRef, displayPath string, depth, limit int, recurse bool, outputDir string, withTypes bool) (exportResult, []*firestore.DocumentRef) {
+func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRef, displayPath string, depth, limit int, recurse bool, outputDir string, withTypes bool, san *sanitizer) (exportResult, []*firestore.DocumentRef) {
 	sp := newSpinner(fmt.Sprintf("Reading %q... 0 documents", displayPath))
 	sp.Start()
 
@@ -481,6 +496,12 @@ func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRe
 		return exportResult{collection: displayPath, depth: depth}, nil
 	}
 
+	if san != nil {
+		for i := range docs {
+			san.sanitizeRecord(docs[i].data)
+		}
+	}
+
 	filePath, err := writeCollectionCSV(docs, fieldSet, displayPath, outputDir, withTypes)
 	if err != nil {
 		printErr("Failed to export %q: %v", displayPath, err)
@@ -500,7 +521,7 @@ func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRe
 
 // readAndExportAggregated reads documents from a sub-collection across multiple parent documents
 // and writes them into a single CSV.
-func readAndExportAggregated(ctx context.Context, parentRefs []*firestore.DocumentRef, subColName, displayPath string, depth, childLimit int, recurse bool, outputDir string, withTypes bool) (exportResult, []*firestore.DocumentRef) {
+func readAndExportAggregated(ctx context.Context, parentRefs []*firestore.DocumentRef, subColName, displayPath string, depth, childLimit int, recurse bool, outputDir string, withTypes bool, san *sanitizer) (exportResult, []*firestore.DocumentRef) {
 	sp := newSpinner(fmt.Sprintf("Reading %q... 0 documents", displayPath))
 	sp.Start()
 
@@ -547,6 +568,12 @@ func readAndExportAggregated(ctx context.Context, parentRefs []*firestore.Docume
 	if len(docs) == 0 {
 		printInfo("Collection %q is empty, skipping.", displayPath)
 		return exportResult{collection: displayPath, depth: depth}, nil
+	}
+
+	if san != nil {
+		for i := range docs {
+			san.sanitizeRecord(docs[i].data)
+		}
 	}
 
 	filePath, err := writeCollectionCSV(docs, fieldSet, displayPath, outputDir, withTypes)
