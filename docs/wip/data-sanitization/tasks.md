@@ -18,15 +18,15 @@
 - [x] 1.5 Implement `sanitizeRecord(data map[string]any)` method — recursive traversal of maps and arrays of maps, replaces matched string values
 
 ## Task 2: Unit tests for config parsing and sanitizer
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#sanitizer-tests](./implementation.md#sanitizer-tests)
 
 ### Subtasks
-- [ ] 2.1 Create `sanitize_test.go` with tests for inline config parsing (valid input, malformed input, unknown faker types)
-- [ ] 2.2 Add tests for YAML config parsing (create temp file, parse, verify)
-- [ ] 2.3 Add tests for `sanitizeRecord`: flat map replacement, nested map recursion, array-of-maps recursion, non-string values left untouched
-- [ ] 2.4 Add tests for seed determinism (same seed = same output) and seed=0 randomness (different output)
+- [x] 2.1 Create `sanitize_test.go` with tests for inline config parsing (valid input, malformed input, unknown faker types)
+- [x] 2.2 Add tests for YAML config parsing (create temp file, parse, verify)
+- [x] 2.3 Add tests for `sanitizeRecord`: flat map replacement, nested map recursion, array-of-maps recursion, non-string values left untouched
+- [x] 2.4 Add tests for seed determinism (same seed = same output) and seed=0 randomness (different output)
 
 ## Task 3: Export integration
 - **Status:** pending
