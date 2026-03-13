@@ -4,10 +4,12 @@ go 1.25.2
 
 require (
 	cloud.google.com/go/firestore v1.21.0
+	github.com/brianvoe/gofakeit/v7 v7.14.1
 	github.com/fatih/color v1.18.0
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/api v0.267.0
 	google.golang.org/genproto v0.0.0-20260217215200-42d3e9bedb6d
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

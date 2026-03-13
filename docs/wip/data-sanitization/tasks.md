@@ -6,16 +6,16 @@
 > Created: 2026-03-12
 
 ## Task 1: Config parsing and sanitizer engine
-- **Status:** pending
+- **Status:** done
 - **Depends on:** —
 - **Docs:** [implementation.md#config-parsing](./implementation.md#config-parsing), [implementation.md#sanitizer-engine](./implementation.md#sanitizer-engine)
 
 ### Subtasks
-- [ ] 1.1 Add `gofakeit/v7` and `gopkg.in/yaml.v3` dependencies via `go get`
-- [ ] 1.2 Create `sanitize.go` with `sanitizeConfig` struct (`Fields map[string]string`) and `parseSanitizeConfig(raw string) (sanitizeConfig, error)` — handles both YAML file and inline `key=type` parsing, validates faker types against a known set
-- [ ] 1.3 Create `sanitizer` struct with `fields`, `faker` fields and `newSanitizer(cfg sanitizeConfig, seed int64) *sanitizer` constructor — seed=0 is random, non-zero is deterministic
-- [ ] 1.4 Implement `generate(fakerType string) string` method — switch dispatch to gofakeit functions for: `firstName`, `lastName`, `email`, `phone`, `address`, `companyName`, `uuid`
-- [ ] 1.5 Implement `sanitizeRecord(data map[string]any)` method — recursive traversal of maps and arrays of maps, replaces matched string values
+- [x] 1.1 Add `gofakeit/v7` and `gopkg.in/yaml.v3` dependencies via `go get`
+- [x] 1.2 Create `sanitize.go` with `sanitizeConfig` struct (`Fields map[string]string`) and `parseSanitizeConfig(raw string) (sanitizeConfig, error)` — handles both YAML file and inline `key=type` parsing, validates faker types against a known set
+- [x] 1.3 Create `sanitizer` struct with `fields`, `faker` fields and `newSanitizer(cfg sanitizeConfig, seed int64) *sanitizer` constructor — seed=0 is random, non-zero is deterministic
+- [x] 1.4 Implement `generate(fakerType string) string` method — switch dispatch to gofakeit functions for: `firstName`, `lastName`, `email`, `phone`, `address`, `companyName`, `uuid`
+- [x] 1.5 Implement `sanitizeRecord(data map[string]any)` method — recursive traversal of maps and arrays of maps, replaces matched string values
 
 ## Task 2: Unit tests for config parsing and sanitizer
 - **Status:** pending
