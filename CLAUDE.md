@@ -12,7 +12,7 @@ go build -o firestore2csv .    # build binary
 
 ## Architecture
 
-Single-file Go CLI (`main.go`, ~1270 lines) using Cobra with two subcommands: `export` and `import`. Connection flags (`--project`/`-p`, `--emulator`/`-e`, `--database`) are shared across subcommands via `newFirestoreClient()`.
+Go CLI using Cobra with three subcommands: `export`, `import`, and `sanitize`. Core export/import logic lives in `main.go`, sanitization logic in `sanitize.go`. Connection flags (`--project`/`-p`, `--emulator`/`-e`, `--database`) are shared across subcommands via `newFirestoreClient()`.
 
 ### Export
 
@@ -30,9 +30,22 @@ Type reconstruction: if `__fs_types__` column is present, `castValue()` uses exp
 
 Conflict strategies (`--on-conflict`): `skip` (don't overwrite existing), `overwrite` (Set), `merge` (Set with MergeAll), `fail` (abort if any doc exists). Supports `--dry-run` to preview without writing.
 
+### Sanitization
+
+**File:** `sanitize.go`
+
+Data sanitization replaces PII in exported data with realistic fake values via `gofakeit/v7`. Available in two forms:
+
+1. **`--sanitize` flag on `export`** — sanitizes during export, before CSV is written. Threaded through `exportCollectionTree` → `readAndExportCollection` / `readAndExportAggregated` via a `*sanitizer` parameter.
+2. **`sanitize` subcommand** — standalone CSV-to-CSV transformation (`runSanitizeCmd` → `runSanitize` → `sanitizeCSVFile`). Discovers CSV files, replaces matched column values, writes to a separate output directory preserving path structure. Operates at column level only (no JSON-blob field matching).
+
+Config parsing (`parseSanitizeConfig`): polymorphic — `.yaml`/`.yml` suffix loads a YAML file, otherwise parses inline `key=type` comma-separated pairs. Validates against a known set of faker types (`firstName`, `lastName`, `email`, `phone`, `address`, `companyName`, `uuid`).
+
+Seed control: `--seed 0` (default) = crypto/rand (non-deterministic), non-zero = deterministic via PCG. Map keys and column indices are sorted before processing to ensure consistent RNG consumption order with seeded fakers.
+
 ## Testing
 
-Unit tests (`main_test.go`) cover pure functions — no infrastructure needed:
+Unit tests (`main_test.go`, `sanitize_test.go`) cover pure functions — no infrastructure needed:
 
 ```bash
 go test -v ./...
