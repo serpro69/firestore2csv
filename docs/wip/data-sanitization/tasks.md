@@ -2,7 +2,7 @@
 
 > Design: [./design.md](./design.md)
 > Implementation: [./implementation.md](./implementation.md)
-> Status: pending
+> Status: done
 > Created: 2026-03-12
 
 ## Task 1: Config parsing and sanitizer engine
@@ -60,9 +60,9 @@
 - [x] 5.2 Add sanitize-subcommand test: create CSV with known content, run sanitize logic, verify output has replaced columns and preserved structure
 
 ## Task 6: Final verification
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1, Task 2, Task 3, Task 4, Task 5
 
 ### Subtasks
-- [ ] 6.1 Run `testing-process` skill to verify all tasks — full test suite, integration tests, edge cases
-- [ ] 6.2 Run `documentation-process` skill to update README and any relevant docs
+- [x] 6.1 Run `testing-process` skill to verify all tasks — full test suite, integration tests, edge cases
+- [x] 6.2 Run `documentation-process` skill to update README and any relevant docs
