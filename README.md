@@ -88,7 +88,8 @@ go run . -p my-project --depth 1 --child-limit 50
 
 Sub-collections are automatically discovered and exported recursively. Documents
 from the same sub-collection across different parent documents are aggregated
-into a single CSV file.
+into a single CSV file. Virtual documents (documents that exist only as
+containers for sub-collections, with no fields of their own) are also traversed.
 
 For example, if `users/alice` and `users/bob` both have an `orders`
 sub-collection, all orders are written to `users/orders.csv`.
