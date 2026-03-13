@@ -526,8 +526,22 @@ func newTestCommand() *cobra.Command {
 	imf.String("on-conflict", "skip", "")
 	imf.Bool("dry-run", false, "")
 
+	sanitizeCmd := &cobra.Command{
+		Use:          "sanitize",
+		SilenceUsage: true,
+		RunE:         runSanitizeCmd,
+	}
+	sf := sanitizeCmd.Flags()
+	sf.String("config", "", "")
+	sf.StringP("input", "i", ".", "")
+	sf.StringP("output", "o", "", "")
+	sf.Int64("seed", 0, "")
+	_ = sanitizeCmd.MarkFlagRequired("config")
+	_ = sanitizeCmd.MarkFlagRequired("output")
+
 	root.AddCommand(exportCmd)
 	root.AddCommand(importCmd)
+	root.AddCommand(sanitizeCmd)
 	return root
 }
 

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/brianvoe/gofakeit/v7"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -146,4 +149,140 @@ func (s *sanitizer) sanitizeRecord(data map[string]any) {
 			}
 		}
 	}
+}
+
+// runSanitizeCmd is the cobra RunE handler for the sanitize subcommand.
+func runSanitizeCmd(cmd *cobra.Command, args []string) error {
+	f := cmd.Flags()
+	configFlag, _ := f.GetString("config")
+	input, _ := f.GetString("input")
+	output, _ := f.GetString("output")
+	seed, _ := f.GetInt64("seed")
+
+	cfg, err := parseSanitizeConfig(configFlag)
+	if err != nil {
+		return fmt.Errorf("invalid --config: %w", err)
+	}
+
+	return runSanitize(cfg, input, output, seed)
+}
+
+// runSanitize sanitizes CSV files from inputPath, writing results to outputDir.
+func runSanitize(cfg sanitizeConfig, inputPath, outputDir string, seed int64) error {
+	fmt.Fprintln(os.Stderr)
+
+	san := newSanitizer(cfg, seed)
+
+	csvFiles, err := discoverCSVFiles([]string{inputPath})
+	if err != nil {
+		return fmt.Errorf("discovering CSV files: %w", err)
+	}
+	if len(csvFiles) == 0 {
+		printInfo("No CSV files found in %q", inputPath)
+		return nil
+	}
+
+	printInfo("Found %d CSV file(s) to sanitize", len(csvFiles))
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+
+	// Determine the base path for computing relative paths.
+	basePath := inputPath
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		return fmt.Errorf("cannot stat input path: %w", err)
+	}
+	if !info.IsDir() {
+		basePath = filepath.Dir(inputPath)
+	}
+
+	totalRows := 0
+	for _, csvFile := range csvFiles {
+		rows, err := sanitizeCSVFile(san, csvFile, basePath, outputDir)
+		if err != nil {
+			printErr("Failed to sanitize %q: %v", csvFile, err)
+			return err
+		}
+		totalRows += rows
+		printOK("Sanitized %q — %d rows", csvFile, rows)
+	}
+
+	fmt.Fprintf(os.Stderr, "\n%s Sanitized %d file(s), %d row(s) total.\n",
+		green("✓"), len(csvFiles), totalRows)
+	return nil
+}
+
+// sanitizeCSVFile reads a CSV file, replaces values in matched columns, and writes
+// the result to outputDir preserving the relative path from basePath.
+func sanitizeCSVFile(san *sanitizer, csvFile, basePath, outputDir string) (int, error) {
+	inFile, err := os.Open(csvFile)
+	if err != nil {
+		return 0, fmt.Errorf("opening %q: %w", csvFile, err)
+	}
+	defer inFile.Close()
+
+	reader := csv.NewReader(inFile)
+	allRows, err := reader.ReadAll()
+	if err != nil {
+		return 0, fmt.Errorf("reading %q: %w", csvFile, err)
+	}
+	if len(allRows) < 1 {
+		return 0, nil // empty file
+	}
+
+	headers := allRows[0]
+
+	// Build column index → faker type mapping, skipping special columns.
+	colMap := make(map[int]string) // col index → faker type
+	for i, header := range headers {
+		if header == "__path__" || header == "__fs_types__" {
+			continue
+		}
+		if fakerType, ok := san.fields[header]; ok {
+			colMap[i] = fakerType
+		}
+	}
+
+	// Sort column indices to ensure deterministic RNG consumption order.
+	sortedCols := make([]int, 0, len(colMap))
+	for idx := range colMap {
+		sortedCols = append(sortedCols, idx)
+	}
+	sort.Ints(sortedCols)
+
+	// Replace matched cells in data rows.
+	dataRows := allRows[1:]
+	for _, row := range dataRows {
+		for _, colIdx := range sortedCols {
+			if colIdx < len(row) {
+				row[colIdx] = san.generate(colMap[colIdx])
+			}
+		}
+	}
+
+	// Compute output path preserving relative structure.
+	relPath, err := filepath.Rel(basePath, csvFile)
+	if err != nil {
+		relPath = filepath.Base(csvFile)
+	}
+	outPath := filepath.Join(outputDir, relPath)
+
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+		return 0, fmt.Errorf("creating output subdirectory: %w", err)
+	}
+
+	outFile, err := os.Create(outPath)
+	if err != nil {
+		return 0, fmt.Errorf("creating %q: %w", outPath, err)
+	}
+	defer outFile.Close()
+
+	writer := csv.NewWriter(outFile)
+	if err := writer.WriteAll(allRows); err != nil {
+		return 0, fmt.Errorf("writing %q: %w", outPath, err)
+	}
+
+	return len(dataRows), nil
 }

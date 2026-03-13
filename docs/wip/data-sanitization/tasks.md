@@ -40,15 +40,15 @@
 - [x] 3.4 Thread sanitizer through `runExport` → `exportCollectionTree` → `exportSubCollectionTree` → `readAndExportCollection` / `readAndExportAggregated` — apply `sanitizeRecord` on each `docRecord.data` before calling `writeCollectionCSV`
 
 ## Task 4: Sanitize subcommand
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 1
 - **Docs:** [implementation.md#sanitize-subcommand](./implementation.md#sanitize-subcommand)
 
 ### Subtasks
-- [ ] 4.1 Register `sanitize` subcommand in `main()` with flags: `--config` (required), `--input`/`-i` (default `.`), `--output`/`-o` (required), `--seed` (default 0)
-- [ ] 4.2 Implement `runSanitize` in `sanitize.go`: discover CSV files in input path, reuse/mirror `discoverCSVFiles` logic
-- [ ] 4.3 For each CSV: read all rows, match column names against config (skip `__path__` and `__fs_types__`), replace matched cells via `sanitizer.generate()`, write to output directory preserving relative path structure
-- [ ] 4.4 Print a summary of files processed and rows sanitized
+- [x] 4.1 Register `sanitize` subcommand in `main()` with flags: `--config` (required), `--input`/`-i` (default `.`), `--output`/`-o` (required), `--seed` (default 0)
+- [x] 4.2 Implement `runSanitize` in `sanitize.go`: discover CSV files in input path, reuse/mirror `discoverCSVFiles` logic
+- [x] 4.3 For each CSV: read all rows, match column names against config (skip `__path__` and `__fs_types__`), replace matched cells via `sanitizer.generate()`, write to output directory preserving relative path structure
+- [x] 4.4 Print a summary of files processed and rows sanitized
 
 ## Task 5: Integration tests
 - **Status:** pending
