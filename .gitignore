@@ -26,3 +26,6 @@ logs
 
 # output
 firestore2csv
+output/
+build/
+target/
