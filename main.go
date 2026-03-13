@@ -22,6 +22,10 @@ import (
 	"google.golang.org/genproto/googleapis/type/latlng"
 )
 
+// defaultEmulatorProject is the project ID used when connecting to an emulator
+// without an explicit --project flag.
+const defaultEmulatorProject = "emulator-project"
+
 type docRecord struct {
 	path string
 	data map[string]any
@@ -281,7 +285,7 @@ type exportConfig struct {
 	sanitizer   *sanitizer
 }
 
-// validateConnectionFlags ensures exactly one of --project or --emulator is provided.
+// validateConnectionFlags ensures at least one of --project or --emulator is provided.
 func validateConnectionFlags(cmd *cobra.Command) (project, database, emulator string, err error) {
 	f := cmd.Flags()
 	project, _ = f.GetString("project")
@@ -289,10 +293,7 @@ func validateConnectionFlags(cmd *cobra.Command) (project, database, emulator st
 	database, _ = f.GetString("database")
 
 	if project == "" && emulator == "" {
-		return "", "", "", fmt.Errorf("exactly one of --project or --emulator must be provided")
-	}
-	if project != "" && emulator != "" {
-		return "", "", "", fmt.Errorf("--project and --emulator are mutually exclusive")
+		return "", "", "", fmt.Errorf("at least one of --project or --emulator must be provided")
 	}
 	return project, database, emulator, nil
 }
@@ -301,7 +302,9 @@ func validateConnectionFlags(cmd *cobra.Command) (project, database, emulator st
 func newFirestoreClient(ctx context.Context, project, database, emulator string) (*firestore.Client, error) {
 	if emulator != "" {
 		os.Setenv("FIRESTORE_EMULATOR_HOST", emulator)
-		project = "emulator-project"
+		if project == "" {
+			project = defaultEmulatorProject
+		}
 	}
 	return firestore.NewClientWithDatabase(ctx, project, database)
 }

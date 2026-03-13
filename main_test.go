@@ -547,32 +547,50 @@ func newTestCommand() *cobra.Command {
 
 func TestValidateConnectionFlags(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    []string
-		wantErr string
+		name         string
+		args         []string
+		wantErr      string
+		wantProject  string
+		wantEmulator string
 	}{
 		{
 			name:    "no project or emulator",
 			args:    []string{"export"},
-			wantErr: "exactly one of --project or --emulator must be provided",
+			wantErr: "at least one of --project or --emulator must be provided",
 		},
 		{
-			name:    "both project and emulator",
-			args:    []string{"export", "-p", "my-project", "-e", "localhost:8686"},
-			wantErr: "--project and --emulator are mutually exclusive",
+			name:         "both project and emulator",
+			args:         []string{"export", "-p", "my-project", "-e", "localhost:8686"},
+			wantProject:  "my-project",
+			wantEmulator: "localhost:8686",
 		},
 		{
-			name: "project only",
-			args: []string{"export", "-p", "my-project"},
+			name:        "project only",
+			args:        []string{"export", "-p", "my-project"},
+			wantProject: "my-project",
 		},
 		{
-			name: "emulator only",
-			args: []string{"export", "-e", "localhost:8686"},
+			name:         "emulator only",
+			args:         []string{"export", "-e", "localhost:8686"},
+			wantEmulator: "localhost:8686",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Use a custom RunE to capture validateConnectionFlags return values.
+			var gotProject, gotEmulator string
 			cmd := newTestCommand()
+			exportCmd, _, _ := cmd.Find([]string{"export"})
+			origRunE := exportCmd.RunE
+			exportCmd.RunE = func(cmd *cobra.Command, args []string) error {
+				p, _, e, err := validateConnectionFlags(cmd)
+				if err != nil {
+					return err
+				}
+				gotProject = p
+				gotEmulator = e
+				return origRunE(cmd, args)
+			}
 			cmd.SetArgs(tt.args)
 			err := cmd.Execute()
 			if tt.wantErr != "" {
@@ -585,6 +603,64 @@ func TestValidateConnectionFlags(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
+				}
+				if gotProject != tt.wantProject {
+					t.Errorf("project = %q, want %q", gotProject, tt.wantProject)
+				}
+				if gotEmulator != tt.wantEmulator {
+					t.Errorf("emulator = %q, want %q", gotEmulator, tt.wantEmulator)
+				}
+			}
+		})
+	}
+}
+
+func TestNewFirestoreClient_ProjectDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		project     string
+		emulator    string
+		wantEnvSet  bool
+		wantEnvHost string
+	}{
+		{
+			name:     "emulator only defaults project",
+			emulator: "localhost:9999",
+			// We can't inspect the project used by the client directly,
+			// but we verify the env var is set.
+			wantEnvSet:  true,
+			wantEnvHost: "localhost:9999",
+		},
+		{
+			name:        "emulator with explicit project",
+			project:     "custom-project",
+			emulator:    "localhost:9999",
+			wantEnvSet:  true,
+			wantEnvHost: "localhost:9999",
+		},
+		{
+			name:    "no emulator does not set env",
+			project: "real-project",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear env and auto-restore on cleanup.
+			t.Setenv("FIRESTORE_EMULATOR_HOST", "")
+
+			// newFirestoreClient will try to connect; we just verify side effects.
+			// The client creation may fail without a real emulator, but that's OK —
+			// we're testing the env-var and project-default logic.
+			_, _ = newFirestoreClient(context.Background(), tt.project, "(default)", tt.emulator)
+
+			envVal := os.Getenv("FIRESTORE_EMULATOR_HOST")
+			if tt.wantEnvSet {
+				if envVal != tt.wantEnvHost {
+					t.Errorf("FIRESTORE_EMULATOR_HOST = %q, want %q", envVal, tt.wantEnvHost)
+				}
+			} else {
+				if envVal != "" {
+					t.Errorf("FIRESTORE_EMULATOR_HOST should not be set, got %q", envVal)
 				}
 			}
 		})
