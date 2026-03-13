@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/csv"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -272,5 +274,151 @@ func TestSanitizer_SeedZeroRandomness(t *testing.T) {
 	}
 	if !anyDifferent {
 		t.Error("seed=0 should produce different output across sanitizer instances (probabilistic check)")
+	}
+}
+
+func TestRunSanitize(t *testing.T) {
+	// Create input CSV
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "out")
+
+	csvContent := "__path__,email,name,age\nusers/alice,alice@real.com,Alice,30\nusers/bob,bob@real.com,Bob,25\n"
+	if err := os.WriteFile(filepath.Join(inputDir, "users.csv"), []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := sanitizeConfig{Fields: map[string]string{
+		"email": "email",
+		"name":  "firstName",
+	}}
+
+	if err := runSanitize(cfg, inputDir, outputDir, 42); err != nil {
+		t.Fatalf("runSanitize error: %v", err)
+	}
+
+	// Read output CSV
+	outData, err := os.ReadFile(filepath.Join(outputDir, "users.csv"))
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+
+	reader := csv.NewReader(strings.NewReader(string(outData)))
+	rows, err := reader.ReadAll()
+	if err != nil {
+		t.Fatalf("parsing output CSV: %v", err)
+	}
+
+	// Header should be preserved
+	if rows[0][0] != "__path__" || rows[0][1] != "email" || rows[0][2] != "name" || rows[0][3] != "age" {
+		t.Errorf("headers changed: %v", rows[0])
+	}
+
+	// __path__ should be untouched
+	if rows[1][0] != "users/alice" {
+		t.Errorf("__path__ should be untouched, got %q", rows[1][0])
+	}
+
+	// email and name should be replaced
+	if rows[1][1] == "alice@real.com" {
+		t.Error("email should have been replaced")
+	}
+	if rows[1][2] == "Alice" {
+		t.Error("name should have been replaced")
+	}
+
+	// age should be untouched (not in config)
+	if rows[1][3] != "30" {
+		t.Errorf("age should be untouched, got %q", rows[1][3])
+	}
+}
+
+func TestRunSanitize_PreservesDirectoryStructure(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "out")
+
+	// Create nested structure: users.csv and users/orders.csv
+	if err := os.MkdirAll(filepath.Join(inputDir, "users"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	csv1 := "__path__,email\nusers/alice,alice@example.com\n"
+	csv2 := "__path__,email\nusers/alice/orders/o1,order@example.com\n"
+	if err := os.WriteFile(filepath.Join(inputDir, "users.csv"), []byte(csv1), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inputDir, "users", "orders.csv"), []byte(csv2), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := sanitizeConfig{Fields: map[string]string{"email": "email"}}
+	if err := runSanitize(cfg, inputDir, outputDir, 42); err != nil {
+		t.Fatalf("runSanitize error: %v", err)
+	}
+
+	// Both files should exist in output with same structure
+	if _, err := os.Stat(filepath.Join(outputDir, "users.csv")); err != nil {
+		t.Errorf("expected users.csv in output: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "users", "orders.csv")); err != nil {
+		t.Errorf("expected users/orders.csv in output: %v", err)
+	}
+}
+
+func TestRunSanitize_SeedDeterminism(t *testing.T) {
+	inputDir := t.TempDir()
+	outDir1 := filepath.Join(t.TempDir(), "out1")
+	outDir2 := filepath.Join(t.TempDir(), "out2")
+
+	csvContent := "__path__,email,name\nusers/alice,alice@real.com,Alice\n"
+	if err := os.WriteFile(filepath.Join(inputDir, "users.csv"), []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := sanitizeConfig{Fields: map[string]string{"email": "email", "name": "firstName"}}
+
+	if err := runSanitize(cfg, inputDir, outDir1, 99); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSanitize(cfg, inputDir, outDir2, 99); err != nil {
+		t.Fatal(err)
+	}
+
+	data1, _ := os.ReadFile(filepath.Join(outDir1, "users.csv"))
+	data2, _ := os.ReadFile(filepath.Join(outDir2, "users.csv"))
+
+	if string(data1) != string(data2) {
+		t.Errorf("same seed should produce identical output:\n%s\nvs\n%s", data1, data2)
+	}
+}
+
+func TestRunSanitize_SkipsSpecialColumns(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "out")
+
+	// __fs_types__ column should never be sanitized even if field name matches config
+	csvContent := "__path__,email,__fs_types__\nusers/alice,alice@example.com,\"{\"\"email\"\":\"\"string\"\"}\"\n"
+	if err := os.WriteFile(filepath.Join(inputDir, "data.csv"), []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := sanitizeConfig{Fields: map[string]string{"email": "email"}}
+	if err := runSanitize(cfg, inputDir, outputDir, 42); err != nil {
+		t.Fatal(err)
+	}
+
+	outData, _ := os.ReadFile(filepath.Join(outputDir, "data.csv"))
+	reader := csv.NewReader(strings.NewReader(string(outData)))
+	rows, _ := reader.ReadAll()
+
+	// __path__ untouched
+	if rows[1][0] != "users/alice" {
+		t.Errorf("__path__ should be untouched, got %q", rows[1][0])
+	}
+	// email should be replaced
+	if rows[1][1] == "alice@example.com" {
+		t.Error("email should have been replaced")
+	}
+	// __fs_types__ untouched
+	if rows[1][2] != "{\"email\":\"string\"}" {
+		t.Errorf("__fs_types__ should be untouched, got %q", rows[1][2])
 	}
 }
