@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -490,7 +491,16 @@ func newTestCommand() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, _, _, err := validateConnectionFlags(cmd)
-			return err
+			if err != nil {
+				return err
+			}
+			sanitizeFlag, _ := cmd.Flags().GetString("sanitize")
+			if sanitizeFlag != "" {
+				if _, err := parseSanitizeConfig(sanitizeFlag); err != nil {
+					return fmt.Errorf("invalid --sanitize config: %w", err)
+				}
+			}
+			return nil
 		},
 	}
 	ef := exportCmd.Flags()
@@ -499,6 +509,9 @@ func newTestCommand() *cobra.Command {
 	ef.Int("child-limit", 0, "")
 	ef.Int("depth", -1, "")
 	ef.StringP("output", "o", ".", "")
+	ef.Bool("with-types", false, "")
+	ef.String("sanitize", "", "")
+	ef.Int64("seed", 0, "")
 
 	importCmd := &cobra.Command{
 		Use:          "import",
@@ -916,6 +929,59 @@ func TestSubcommandStructure(t *testing.T) {
 		cmd.SetArgs([]string{"import", "-e", "localhost:8686"})
 		if err := cmd.Execute(); err != nil {
 			t.Errorf("import subcommand error: %v", err)
+		}
+	})
+}
+
+func TestExportSanitizeFlag(t *testing.T) {
+	t.Run("valid inline config is accepted", func(t *testing.T) {
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"export", "-p", "test", "--sanitize", "email=email,name=firstName"})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid config returns error", func(t *testing.T) {
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"export", "-p", "test", "--sanitize", "email=bogusType"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for unknown faker type")
+		}
+		if !strings.Contains(err.Error(), "invalid --sanitize config") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("malformed config returns error", func(t *testing.T) {
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"export", "-p", "test", "--sanitize", "noequalssign"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for malformed config")
+		}
+	})
+
+	t.Run("missing yaml file returns error", func(t *testing.T) {
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"export", "-p", "test", "--sanitize", "/nonexistent/config.yaml"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for missing yaml file")
+		}
+	})
+
+	t.Run("valid yaml config is accepted", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		if err := os.WriteFile(path, []byte("fields:\n  email: email\n"), 0644); err != nil {
+			t.Fatalf("writing temp yaml: %v", err)
+		}
+		cmd := newTestCommand()
+		cmd.SetArgs([]string{"export", "-p", "test", "--sanitize", path})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("unexpected error: %v", err)
 		}
 	})
 }
