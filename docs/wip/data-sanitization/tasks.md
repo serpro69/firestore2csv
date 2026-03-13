@@ -51,13 +51,13 @@
 - [x] 4.4 Print a summary of files processed and rows sanitized
 
 ## Task 5: Integration tests
-- **Status:** pending
+- **Status:** done
 - **Depends on:** Task 3, Task 4
 - **Docs:** [implementation.md#integration-tests](./implementation.md#integration-tests)
 
 ### Subtasks
-- [ ] 5.1 In `integration_test.go`, add export+sanitize test: seed data with known PII, export with `--sanitize` and `--seed`, verify configured fields are replaced and non-configured fields are untouched, verify determinism with same seed
-- [ ] 5.2 Add sanitize-subcommand test: create CSV with known content, run sanitize logic, verify output has replaced columns and preserved structure
+- [x] 5.1 In `integration_test.go`, add export+sanitize test: seed data with known PII, export with `--sanitize` and `--seed`, verify configured fields are replaced and non-configured fields are untouched, verify determinism with same seed
+- [x] 5.2 Add sanitize-subcommand test: create CSV with known content, run sanitize logic, verify output has replaced columns and preserved structure
 
 ## Task 6: Final verification
 - **Status:** pending

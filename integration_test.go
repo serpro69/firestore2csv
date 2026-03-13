@@ -230,7 +230,7 @@ func TestExportSingleCollection(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	results := exportCollectionTree(ctx, client, "users", 0, 0, 0, tmpDir, false)
+	results := exportCollectionTree(ctx, client, "users", 0, 0, 0, tmpDir, false, nil)
 
 	// depth=0 means top-level only
 	if len(results) != 1 {
@@ -260,7 +260,7 @@ func TestExportWithSubCollections(t *testing.T) {
 	ctx := context.Background()
 
 	// depth=-1 means unlimited recursion
-	results := exportCollectionTree(ctx, client, "users", 0, 0, -1, tmpDir, false)
+	results := exportCollectionTree(ctx, client, "users", 0, 0, -1, tmpDir, false, nil)
 
 	// Should have users + users/orders + users/orders/items
 	if len(results) < 3 {
@@ -293,7 +293,7 @@ func TestExportDepthLimit(t *testing.T) {
 	ctx := context.Background()
 
 	// depth=1 means users + orders but NOT items
-	results := exportCollectionTree(ctx, client, "users", 0, 0, 1, tmpDir, false)
+	results := exportCollectionTree(ctx, client, "users", 0, 0, 1, tmpDir, false, nil)
 
 	// Should have users + users/orders only
 	collections := map[string]bool{}
@@ -325,7 +325,7 @@ func TestExportWithLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	results := exportCollectionTree(ctx, client, "users", 1, 0, 0, tmpDir, false)
+	results := exportCollectionTree(ctx, client, "users", 1, 0, 0, tmpDir, false, nil)
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
@@ -829,4 +829,161 @@ func collectSubCollectionNames(t *testing.T, ref *firestore.DocumentRef) []strin
 	}
 	sort.Strings(names)
 	return names
+}
+
+func TestExportWithSanitize(t *testing.T) {
+	client := newTestClient(t)
+	seedFirestore(t, client)
+
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	san := newSanitizer(sanitizeConfig{Fields: map[string]string{
+		"name": "firstName",
+	}}, 42)
+
+	ctx := context.Background()
+
+	// First export with sanitization
+	results1 := exportCollectionTree(ctx, client, "users", 0, 0, 0, tmpDir1, false, san)
+	if len(results1) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results1))
+	}
+	if results1[0].err != nil {
+		t.Fatalf("export error: %v", results1[0].err)
+	}
+
+	records1 := readTestCSV(t, filepath.Join(tmpDir1, "users.csv"))
+	if len(records1) != 4 { // header + 3 users
+		t.Fatalf("expected 4 rows, got %d", len(records1))
+	}
+
+	// Find header indices
+	headers := records1[0]
+	nameIdx := -1
+	ageIdx := -1
+	for i, h := range headers {
+		switch h {
+		case "name":
+			nameIdx = i
+		case "age":
+			ageIdx = i
+		}
+	}
+	if nameIdx == -1 {
+		t.Fatal("name column not found")
+	}
+	if ageIdx == -1 {
+		t.Fatal("age column not found")
+	}
+
+	// Verify configured field (name) is replaced
+	originalNames := map[string]bool{"Alice": true, "Bob": true, "Charlie": true}
+	for _, row := range records1[1:] {
+		if originalNames[row[nameIdx]] {
+			t.Errorf("name should have been sanitized, got original: %q", row[nameIdx])
+		}
+	}
+
+	// Verify non-configured field (age) is untouched
+	ageValues := map[string]bool{"30": true, "25": true, "35": true}
+	for _, row := range records1[1:] {
+		if !ageValues[row[ageIdx]] {
+			t.Errorf("age should be untouched, got %q", row[ageIdx])
+		}
+	}
+
+	// Second export with same seed — verify determinism
+	san2 := newSanitizer(sanitizeConfig{Fields: map[string]string{
+		"name": "firstName",
+	}}, 42)
+
+	results2 := exportCollectionTree(ctx, client, "users", 0, 0, 0, tmpDir2, false, san2)
+	if results2[0].err != nil {
+		t.Fatalf("second export error: %v", results2[0].err)
+	}
+
+	records2 := readTestCSV(t, filepath.Join(tmpDir2, "users.csv"))
+
+	// Same seed should produce identical CSV content
+	if len(records1) != len(records2) {
+		t.Fatalf("row count mismatch: %d vs %d", len(records1), len(records2))
+	}
+	for i := range records1 {
+		for j := range records1[i] {
+			if records1[i][j] != records2[i][j] {
+				t.Errorf("row %d col %d: %q vs %q", i, j, records1[i][j], records2[i][j])
+			}
+		}
+	}
+}
+
+func TestSanitizeSubcommand(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "sanitized")
+
+	// Create CSV files mimicking export output with nested structure
+	usersCSV := "__path__,name,age,active\nusers/user1,Alice,30,true\nusers/user2,Bob,25,false\n"
+	if err := os.MkdirAll(filepath.Join(inputDir, "users"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ordersCSV := "__path__,amount,date\nusers/user1/orders/order1,100.50,2024-06-15T12:00:00Z\n"
+
+	if err := os.WriteFile(filepath.Join(inputDir, "users.csv"), []byte(usersCSV), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inputDir, "users", "orders.csv"), []byte(ordersCSV), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := sanitizeConfig{Fields: map[string]string{"name": "firstName"}}
+	if err := runSanitize(cfg, inputDir, outputDir, 42); err != nil {
+		t.Fatalf("runSanitize error: %v", err)
+	}
+
+	// Verify output directory structure
+	outUsersCSV := filepath.Join(outputDir, "users.csv")
+	outOrdersCSV := filepath.Join(outputDir, "users", "orders.csv")
+
+	if _, err := os.Stat(outUsersCSV); err != nil {
+		t.Fatalf("expected users.csv in output: %v", err)
+	}
+	if _, err := os.Stat(outOrdersCSV); err != nil {
+		t.Fatalf("expected users/orders.csv in output: %v", err)
+	}
+
+	// Verify users.csv content
+	records := readTestCSV(t, outUsersCSV)
+	if len(records) != 3 { // header + 2 rows
+		t.Fatalf("expected 3 rows, got %d", len(records))
+	}
+
+	// Header preserved
+	if records[0][0] != "__path__" || records[0][1] != "name" {
+		t.Errorf("headers changed: %v", records[0])
+	}
+
+	// __path__ untouched
+	if records[1][0] != "users/user1" {
+		t.Errorf("__path__ should be untouched, got %q", records[1][0])
+	}
+
+	// name replaced
+	if records[1][1] == "Alice" || records[2][1] == "Bob" {
+		t.Error("name column should have been sanitized")
+	}
+
+	// age and active untouched
+	if records[1][2] != "30" || records[1][3] != "true" {
+		t.Errorf("non-configured fields should be untouched: age=%q active=%q", records[1][2], records[1][3])
+	}
+
+	// Verify orders.csv is unchanged (no matching columns)
+	orderRecords := readTestCSV(t, outOrdersCSV)
+	if orderRecords[1][0] != "users/user1/orders/order1" {
+		t.Errorf("orders __path__ changed: %q", orderRecords[1][0])
+	}
+	if orderRecords[1][1] != "100.50" {
+		t.Errorf("orders amount changed: %q", orderRecords[1][1])
+	}
 }
