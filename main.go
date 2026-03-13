@@ -517,8 +517,29 @@ func readAndExportCollection(ctx context.Context, colRef *firestore.CollectionRe
 	sp.Stop()
 
 	if len(docs) == 0 {
-		printInfo("Collection %q is empty, skipping.", displayPath)
-		return exportResult{collection: displayPath, depth: depth}, nil
+		// Even if there are no documents with data, there may be virtual
+		// documents that act as containers for sub-collections. List document
+		// refs so the caller can still discover sub-collections.
+		if recurse {
+			refIter := colRef.DocumentRefs(ctx)
+			for {
+				ref, err := refIter.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					printErr("Failed to list document refs for %q: %v", displayPath, err)
+					break
+				}
+				docRefs = append(docRefs, ref)
+			}
+		}
+		if len(docRefs) == 0 {
+			printInfo("Collection %q is empty, skipping.", displayPath)
+		} else {
+			printInfo("Collection %q has no documents with data, checking sub-collections...", displayPath)
+		}
+		return exportResult{collection: displayPath, depth: depth}, docRefs
 	}
 
 	if san != nil {
@@ -591,8 +612,31 @@ func readAndExportAggregated(ctx context.Context, parentRefs []*firestore.Docume
 	sp.Stop()
 
 	if len(docs) == 0 {
-		printInfo("Collection %q is empty, skipping.", displayPath)
-		return exportResult{collection: displayPath, depth: depth}, nil
+		// Even if there are no documents with data, there may be virtual
+		// documents that act as containers for sub-collections.
+		if recurse {
+			for _, parentRef := range parentRefs {
+				colRef := parentRef.Collection(subColName)
+				refIter := colRef.DocumentRefs(ctx)
+				for {
+					ref, err := refIter.Next()
+					if err == iterator.Done {
+						break
+					}
+					if err != nil {
+						printErr("Failed to list document refs for %q: %v", displayPath, err)
+						break
+					}
+					docRefs = append(docRefs, ref)
+				}
+			}
+		}
+		if len(docRefs) == 0 {
+			printInfo("Collection %q is empty, skipping.", displayPath)
+		} else {
+			printInfo("Collection %q has no documents with data, checking sub-collections...", displayPath)
+		}
+		return exportResult{collection: displayPath, depth: depth}, docRefs
 	}
 
 	if san != nil {
@@ -630,6 +674,7 @@ func discoverSubCollections(ctx context.Context, docRefs []*firestore.DocumentRe
 				break
 			}
 			if err != nil {
+				printErr("Failed to list sub-collections for %q: %v", ref.Path, err)
 				break
 			}
 			subCols[colRef.ID] = append(subCols[colRef.ID], ref)

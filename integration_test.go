@@ -139,7 +139,7 @@ func cleanFirestore(t *testing.T, client *firestore.Client) {
 	t.Helper()
 	ctx := context.Background()
 
-	for _, name := range []string{"users", "products", "imported_users", "imported_products", "target", "heuristic_target"} {
+	for _, name := range []string{"users", "products", "imported_users", "imported_products", "target", "heuristic_target", "virtual_parents"} {
 		deleteCollection(ctx, t, client, client.Collection(name))
 	}
 }
@@ -985,5 +985,135 @@ func TestSanitizeSubcommand(t *testing.T) {
 	}
 	if orderRecords[1][1] != "100.50" {
 		t.Errorf("orders amount changed: %q", orderRecords[1][1])
+	}
+}
+
+// TestExportVirtualDocuments verifies that sub-collections are discovered and
+// exported even when the parent documents contain no data (virtual documents).
+// In Firestore, a document can exist solely as a container for sub-collections
+// without having any fields; such documents are not returned by collection queries.
+func TestExportVirtualDocuments(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	// Create sub-collection documents under "virtual" parent documents that have
+	// no data of their own. We write directly to the sub-collection path, which
+	// creates the parent document as a virtual (data-less) container.
+	subDocs := []struct {
+		parentID string
+		childID  string
+		data     map[string]any
+	}{
+		{"vdoc1", "child1", map[string]any{"value": "a"}},
+		{"vdoc1", "child2", map[string]any{"value": "b"}},
+		{"vdoc2", "child3", map[string]any{"value": "c"}},
+	}
+	for _, d := range subDocs {
+		ref := client.Collection("virtual_parents").Doc(d.parentID).Collection("children").Doc(d.childID)
+		if _, err := ref.Set(ctx, d.data); err != nil {
+			t.Fatalf("failed to seed %s: %v", ref.Path, err)
+		}
+	}
+	t.Cleanup(func() {
+		// Clean up sub-collection docs, then virtual parents
+		for _, d := range subDocs {
+			ref := client.Collection("virtual_parents").Doc(d.parentID).Collection("children").Doc(d.childID)
+			ref.Delete(ctx)
+		}
+		for _, id := range []string{"vdoc1", "vdoc2"} {
+			client.Collection("virtual_parents").Doc(id).Delete(ctx)
+		}
+	})
+
+	// Verify that the top-level collection query returns 0 docs (virtual docs).
+	docs, err := client.Collection("virtual_parents").Documents(ctx).GetAll()
+	if err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+	if len(docs) != 0 {
+		t.Fatalf("expected 0 documents from query, got %d (test setup issue)", len(docs))
+	}
+
+	tmpDir := t.TempDir()
+	results := exportCollectionTree(ctx, client, "virtual_parents", 0, 0, -1, tmpDir, false, nil)
+
+	// We should get 2 results: virtual_parents (0 docs) + virtual_parents/children
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d: %+v", len(results), results)
+	}
+
+	// The top-level collection should have 0 docs (no CSV written)
+	if results[0].docCount != 0 {
+		t.Errorf("virtual_parents docCount = %d, want 0", results[0].docCount)
+	}
+
+	// The children sub-collection should have all 3 docs
+	var childrenResult *exportResult
+	for i := range results {
+		if results[i].collection == "virtual_parents/children" {
+			childrenResult = &results[i]
+			break
+		}
+	}
+	if childrenResult == nil {
+		t.Fatal("expected 'virtual_parents/children' in results")
+	}
+	if childrenResult.docCount != 3 {
+		t.Errorf("children docCount = %d, want 3", childrenResult.docCount)
+	}
+
+	// Verify the CSV file exists and has correct content
+	csvPath := filepath.Join(tmpDir, "virtual_parents", "children.csv")
+	if _, err := os.Stat(csvPath); os.IsNotExist(err) {
+		t.Fatalf("expected %s to exist", csvPath)
+	}
+	records := readTestCSV(t, csvPath)
+	if len(records) != 4 { // header + 3 data rows
+		t.Errorf("expected 4 CSV rows (header + 3), got %d", len(records))
+	}
+}
+
+// TestExportVirtualDocumentsNested verifies that virtual document traversal works
+// across multiple nesting levels: grandparent (virtual) → parent (virtual) → children (with data).
+func TestExportVirtualDocumentsNested(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	// Create a deeply nested sub-collection where both the top-level and
+	// intermediate documents are virtual (no data).
+	ref := client.Collection("virtual_parents").Doc("deep1").Collection("middle").Doc("mid1").Collection("leaves").Doc("leaf1")
+	if _, err := ref.Set(ctx, map[string]any{"label": "deep"}); err != nil {
+		t.Fatalf("failed to seed: %v", err)
+	}
+	t.Cleanup(func() {
+		ref.Delete(ctx)
+		client.Collection("virtual_parents").Doc("deep1").Collection("middle").Doc("mid1").Delete(ctx)
+		client.Collection("virtual_parents").Doc("deep1").Delete(ctx)
+	})
+
+	tmpDir := t.TempDir()
+	results := exportCollectionTree(ctx, client, "virtual_parents", 0, 0, -1, tmpDir, false, nil)
+
+	// Collect exported collection names
+	collections := map[string]bool{}
+	for _, r := range results {
+		collections[r.collection] = true
+	}
+
+	if !collections["virtual_parents/middle"] {
+		t.Error("expected 'virtual_parents/middle' in results")
+	}
+	if !collections["virtual_parents/middle/leaves"] {
+		t.Error("expected 'virtual_parents/middle/leaves' in results")
+	}
+
+	// Verify leaves CSV
+	csvPath := filepath.Join(tmpDir, "virtual_parents", "middle", "leaves.csv")
+	if _, err := os.Stat(csvPath); os.IsNotExist(err) {
+		t.Fatalf("expected %s to exist", csvPath)
+	}
+	records := readTestCSV(t, csvPath)
+	if len(records) != 2 { // header + 1 data row
+		t.Errorf("expected 2 CSV rows, got %d", len(records))
 	}
 }

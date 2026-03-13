@@ -16,7 +16,7 @@ Go CLI using Cobra with three subcommands: `export`, `import`, and `sanitize`. C
 
 ### Export
 
-`main()` → `run()` → `runExport()` → `resolveCollections()` → `exportCollectionTree()` per collection → `writeCollectionCSV()`.
+`main()` → `run()` → `runExport()` → `resolveCollections()` → `exportCollectionTree()` per collection → `writeCollectionCSV()`. Virtual documents (no data, only sub-collections) are discovered via `DocumentRefs()` so their sub-collections are still exported.
 
 CSV format: first column is `__path__` (full document path, e.g. `users/alice/orders/order1`). Optional `--with-types` flag appends a `__fs_types__` column containing a JSON map of field→type labels.
 
