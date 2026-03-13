@@ -12,7 +12,7 @@ go build -o firestore2csv .    # build binary
 
 ## Architecture
 
-Go CLI using Cobra with three subcommands: `export`, `import`, and `sanitize`. Core export/import logic lives in `main.go`, sanitization logic in `sanitize.go`. Connection flags (`--project`/`-p`, `--emulator`/`-e`, `--database`) are shared across subcommands via `newFirestoreClient()`.
+Go CLI using Cobra with three subcommands: `export`, `import`, and `sanitize`. Core export/import logic lives in `main.go`, sanitization logic in `sanitize.go`. Connection flags (`--project`/`-p`, `--emulator`/`-e`, `--database`) are shared across subcommands via `newFirestoreClient()`. At least one of `--project` or `--emulator` must be provided; both can be used together (e.g. `-e localhost:8686 -p my-project`) to set the project ID when talking to an emulator in single-project mode. When only `--emulator` is given, the project defaults to `"emulator-project"`.
 
 ### Export
 

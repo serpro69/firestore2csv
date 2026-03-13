@@ -34,15 +34,18 @@ go run . -p <project-id> [flags]
 
 ### Flags
 
-| Flag            | Short | Default      | Description                                          |
-| --------------- | ----- | ------------ | ---------------------------------------------------- |
-| `--project`     | `-p`  | _(required)_ | GCP project ID                                       |
-| `--database`    | `-d`  | `(default)`  | Firestore database name                              |
-| `--collections` | `-c`  | _(all)_      | Comma-separated top-level collection names to export |
-| `--limit`       | `-l`  | `0` (all)    | Max documents per top-level collection               |
-| `--child-limit` |       | `0` (all)    | Max documents per sub-collection                     |
-| `--depth`       |       | `-1` (all)   | Max sub-collection depth (`0` = top-level only)      |
-| `--output`      | `-o`  | `.`          | Output directory for CSV files                       |
+| Flag            | Short | Default              | Description                                          |
+| --------------- | ----- | -------------------- | ---------------------------------------------------- |
+| `--project`     | `-p`  | _(required\*)_       | GCP project ID                                       |
+| `--emulator`    | `-e`  |                      | Firestore emulator host (e.g. `localhost:8686`)      |
+| `--database`    | `-d`  | `(default)`          | Firestore database name                              |
+| `--collections` | `-c`  | _(all)_              | Comma-separated top-level collection names to export |
+| `--limit`       | `-l`  | `0` (all)            | Max documents per top-level collection               |
+| `--child-limit` |       | `0` (all)            | Max documents per sub-collection                     |
+| `--depth`       |       | `-1` (all)           | Max sub-collection depth (`0` = top-level only)      |
+| `--output`      | `-o`  | `.`                  | Output directory for CSV files                       |
+
+\* At least one of `--project` or `--emulator` must be provided. Both can be used together to specify the project ID when connecting to an emulator running in single-project mode (e.g. `-e localhost:8686 -p my-project`). When only `--emulator` is given, the project defaults to `emulator-project`.
 
 ### Examples
 
@@ -74,6 +77,18 @@ Export with one level of sub-collections, limiting sub-collection docs:
 
 ```bash
 go run . -p my-project --depth 1 --child-limit 50
+```
+
+Export from a local emulator:
+
+```bash
+go run . -e localhost:8686
+```
+
+Export from an emulator with a specific project ID (for single-project mode):
+
+```bash
+go run . -e localhost:8686 -p my-project
 ```
 
 ## Output Format
