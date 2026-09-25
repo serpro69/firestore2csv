@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-UPSTREAM_REPO="serpro69/claude-starter-kit"
+UPSTREAM_REPO="serpro69/claude-toolbox"
 UPSTREAM_URL="https://github.com/$UPSTREAM_REPO"
 RAW_URL="https://raw.githubusercontent.com/$UPSTREAM_REPO"
 
@@ -57,7 +57,7 @@ fetch_file() {
   local local_path="$3"
 
   local url="$RAW_URL/$version/$remote_path"
-  if ! curl -fsSL "$url" -o "$local_path" 2>/dev/null; then
+  if ! curl -fsSL -H "Cache-Control: no-cache, no-store" "$url" -o "$local_path" 2>/dev/null; then
     log_error "Failed to fetch $url"
     echo "  Download manually: $UPSTREAM_URL/blob/$version/$remote_path"
     return 1
@@ -75,8 +75,9 @@ main() {
   fetch_file "$version" ".github/workflows/template-sync.yml" ".github/workflows/template-sync.yml" || ((failed++))
 
   log_step "Fetching template-sync.sh..."
-  fetch_file "$version" ".github/scripts/template-sync.sh" ".github/scripts/template-sync.sh" || ((failed++))
-  chmod +x .github/scripts/template-sync.sh 2>/dev/null || true
+  mkdir -p .claude/toolbox/scripts
+  fetch_file "$version" ".claude/toolbox/scripts/template-sync.sh" ".claude/toolbox/scripts/template-sync.sh" || ((failed++))
+  chmod +x .claude/toolbox/scripts/template-sync.sh 2>/dev/null || true
 
   if [[ "$failed" -gt 0 ]]; then
     log_error "$failed file(s) failed to download"
@@ -84,7 +85,7 @@ main() {
   fi
 
   # Verify non-empty
-  for f in .github/workflows/template-sync.yml .github/scripts/template-sync.sh; do
+  for f in .github/workflows/template-sync.yml .claude/toolbox/scripts/template-sync.sh; do
     if [[ ! -s "$f" ]]; then
       log_error "$f is empty after download"
       exit 1
@@ -96,7 +97,7 @@ main() {
   # Show diff if in a git repo
   if git rev-parse --is-inside-work-tree &>/dev/null; then
     echo ""
-    git diff --stat .github/workflows/template-sync.yml .github/scripts/template-sync.sh 2>/dev/null || true
+    git diff --stat .github/workflows/template-sync.yml .claude/toolbox/scripts/template-sync.sh 2>/dev/null || true
   fi
 }
 

@@ -29,3 +29,5 @@ firestore2csv
 output/
 build/
 target/
+.capy/**
+!.capy/AGENTS.md
