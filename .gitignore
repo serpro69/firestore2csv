@@ -8,6 +8,7 @@
 !.github/**
 !.yamlfmt.yaml
 !.yamllint.yml
+!.capy.toml
 
 # Logs
 logs
