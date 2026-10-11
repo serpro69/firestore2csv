@@ -1,0 +1,21 @@
+# Categories for auto-generated release notes (`gh release create --generate-notes`).
+# PRs are grouped by label; unlabeled PRs land in "Other Changes".
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: 🚀 Added
+      labels:
+        - enhancement
+    - title: 🐞 Fixed
+      labels:
+        - bug
+    - title: 📝 Documentation
+      labels:
+        - documentation
+    - title: Other Changes
+      labels:
+        - "*"

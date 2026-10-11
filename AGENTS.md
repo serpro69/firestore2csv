@@ -66,3 +66,13 @@ FIRESTORE_EMULATOR_HOST=localhost:8686 go test -v -tags integration -count=1 ./.
 ```
 
 The emulator port is configured in `firebase.json`.
+
+## CI and releases
+
+Workflows live in `.github/workflows/`:
+
+- `ci.yml` — on push/PR to `master`: `go vet`, `go test -race`, a cross-compile check for all release targets, and the integration tests via `firebase emulators:exec`.
+- `lint.yml` — on push/PR to `master`: `gofmt -l` check and gitleaks secret scanning.
+- `release.yml` — on `v*` tags: cross-compiles `darwin/{arm64,amd64}` and `linux/{amd64,arm64}` with `CGO_ENABLED=0`, creates a GitHub release with tarballs + `SHA256SUMS`, then regenerates the formula in the `serpro69/homebrew-tap` repo (stable tags only; needs the `HOMEBREW_TAP_TOKEN` secret). Release-note categories are configured in `.github/release.yml`.
+
+The release build stamps the tag via `-ldflags "-X main.version=<tag>"`; `buildVersion()` in `main.go` prefers that value and falls back to VCS/module info for local and `go install` builds.

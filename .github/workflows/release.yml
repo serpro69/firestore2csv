@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency: release-${{ github.ref }}
+
+env:
+  BINARY: firestore2csv
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o "${BINARY}" .
+
+      # The binary is pure Go and cross-compiled, so only the build that
+      # matches the runner (linux/amd64) can be executed here. The Homebrew
+      # formula's `test do` block covers the other platforms at install time.
+      - name: Smoke test
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          OUTPUT=$(./"${BINARY}" --version)
+          echo "Version output: ${OUTPUT}"
+          echo "${OUTPUT}" | grep -q "${{ github.ref_name }}"
+
+      - name: Package
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          tar czf "${BINARY}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" \
+            "${BINARY}" LICENSE.md README.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.BINARY }}_*.tar.gz
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: build-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum "${BINARY}"_*.tar.gz > SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          PRERELEASE=""
+          case "$TAG" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$TAG" --generate-notes $PRERELEASE "${BINARY}"_*.tar.gz SHA256SUMS
+
+  homebrew:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap repo
+        uses: actions/checkout@v7
+        with:
+          repository: serpro69/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern SHA256SUMS
+
+      - name: Generate formula
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+
+          sha_for() {
+            local sha
+            sha=$(grep "_$1.tar.gz" SHA256SUMS | awk '{print $1}')
+            if [ -z "$sha" ]; then
+              echo "::error::No checksum for $1 in SHA256SUMS" >&2
+              exit 1
+            fi
+            echo "$sha"
+          }
+          SHA_DARWIN_ARM64=$(sha_for darwin_arm64)
+          SHA_DARWIN_AMD64=$(sha_for darwin_amd64)
+          SHA_LINUX_AMD64=$(sha_for linux_amd64)
+          SHA_LINUX_ARM64=$(sha_for linux_arm64)
+
+          mkdir -p Formula
+          cat > "Formula/${BINARY}.rb" << RUBY
+          class Firestore2csv < Formula
+            desc "Export and import Google Cloud Firestore collections as CSV files"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/${BINARY}_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              elsif Hardware::CPU.intel?
+                url "${BASE_URL}/${BINARY}_${VERSION}_darwin_amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/${BINARY}_${VERSION}_linux_arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              elsif Hardware::CPU.intel?
+                url "${BASE_URL}/${BINARY}_${VERSION}_linux_amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "${BINARY}"
+              generate_completions_from_executable(bin/"${BINARY}", shell_parameter_format: :cobra)
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/${BINARY} --version")
+            end
+          end
+          RUBY
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' "Formula/${BINARY}.rb"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/${BINARY}.rb"
+          git commit -m "Update ${BINARY} to ${{ github.ref_name }}"
+          git push

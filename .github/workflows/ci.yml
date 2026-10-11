@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - run: go vet ./...
+
+      # -race needs cgo; the release binary itself is built with CGO_ENABLED=0.
+      - run: go test -race ./...
+
+      - name: Cross-compile release targets
+        run: |
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
+              go build -trimpath -o /dev/null . || { echo "::error::build failed for ${target}"; exit 1; }
+          done
+
+  # Integration tests (`//go:build integration`) run against the Firestore
+  # emulator from the Firebase CLI. The emulator is a Java program; the port
+  # (8686) is configured in firebase.json.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - run: npm install -g firebase-tools
+
+      - name: Run integration tests against Firestore emulator
+        run: |
+          firebase emulators:exec --only firestore --project test-project \
+            "FIRESTORE_EMULATOR_HOST=localhost:8686 go test -v -tags integration -count=1 ./..."

@@ -40,7 +40,14 @@ type exportResult struct {
 	err        error
 }
 
+// version is stamped by the release workflow via
+// -ldflags "-X main.version=vX.Y.Z". Empty for local and `go install` builds.
+var version string
+
 func buildVersion() string {
+	if version != "" {
+		return version
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"
@@ -1203,11 +1210,11 @@ func discoverCSVFiles(inputs []string) ([]string, error) {
 }
 
 type importSummary struct {
-	written  int
-	skipped  int
-	failed   int
-	dryRun   int
-	total    int
+	written int
+	skipped int
+	failed  int
+	dryRun  int
+	total   int
 }
 
 func runImport(cfg importConfig) error {

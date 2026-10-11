@@ -193,8 +193,8 @@ func TestSanitizeRecord_ArrayOfMaps(t *testing.T) {
 
 func TestSanitizeRecord_NonStringValues(t *testing.T) {
 	cfg := sanitizeConfig{Fields: map[string]string{
-		"email": "email",
-		"count": "firstName",
+		"email":  "email",
+		"count":  "firstName",
 		"active": "lastName",
 	}}
 	s := newSanitizer(cfg, 42)

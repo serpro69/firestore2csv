@@ -10,12 +10,31 @@ A CLI tool to export Google Cloud Firestore collections to CSV files.
   gcloud auth application-default login
   ```
 
-## Usage
+## Installation
 
-Install and run:
+### Homebrew (macOS and Linux)
 
 ```bash
-go install github.com/serpro69/firestore2csv
+brew install serpro69/tap/firestore2csv
+```
+
+### Pre-built binaries
+
+Download the archive for your platform from the
+[releases page](https://github.com/serpro69/firestore2csv/releases), verify it
+against `SHA256SUMS`, and put the `firestore2csv` binary on your `PATH`.
+Builds are published for `darwin/arm64`, `darwin/amd64`, `linux/amd64` and
+`linux/arm64`.
+
+### From source
+
+```bash
+go install github.com/serpro69/firestore2csv@latest
+```
+
+## Usage
+
+```bash
 firestore2csv -p <project-id> [flags]
 ```
 
@@ -169,3 +188,20 @@ To run manually:
 firebase emulators:start --only firestore --project test-project &
 FIRESTORE_EMULATOR_HOST=localhost:8686 go test -v -tags integration -count=1 ./...
 ```
+
+## Releasing
+
+Releases are cut by pushing a semver tag:
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+The [release workflow](.github/workflows/release.yml) then:
+
+1. Cross-compiles the binary for `darwin/arm64`, `darwin/amd64`, `linux/amd64` and `linux/arm64`, stamping the tag into `firestore2csv --version`.
+2. Creates a GitHub release with the tarballs, a `SHA256SUMS` file, and notes generated from merged PRs (grouped by label as configured in [`.github/release.yml`](.github/release.yml)).
+3. Regenerates `Formula/firestore2csv.rb` in [serpro69/homebrew-tap](https://github.com/serpro69/homebrew-tap) and pushes it. Pre-release tags (anything containing `-`, e.g. `v0.3.0-rc1`) are marked as pre-releases and skip the Homebrew update.
+
+The Homebrew step needs a `HOMEBREW_TAP_TOKEN` repository secret: a fine-grained personal access token with `contents: write` on the tap repository.

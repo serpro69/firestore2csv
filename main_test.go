@@ -41,6 +41,22 @@ func TestDocumentPath(t *testing.T) {
 	}
 }
 
+func TestBuildVersion_LdflagsOverride(t *testing.T) {
+	orig := version
+	t.Cleanup(func() { version = orig })
+
+	version = "v9.9.9"
+	if got := buildVersion(); got != "v9.9.9" {
+		t.Errorf("buildVersion() with ldflags override = %q, want %q", got, "v9.9.9")
+	}
+
+	// Without the override, the fallback must still produce a non-empty value.
+	version = ""
+	if got := buildVersion(); got == "" {
+		t.Error("buildVersion() without override returned empty string")
+	}
+}
+
 func TestFmtInt(t *testing.T) {
 	tests := []struct {
 		input int

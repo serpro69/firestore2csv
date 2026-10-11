@@ -525,8 +525,8 @@ func TestImportConflictSkip(t *testing.T) {
 	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
 
 	err := runImport(importConfig{
-		project:    testProject,
-		database:   "(default)",
+		project:  testProject,
+		database: "(default)",
 
 		inputs:     []string{importDir},
 		onConflict: "skip",
@@ -567,8 +567,8 @@ func TestImportConflictOverwrite(t *testing.T) {
 	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
 
 	err := runImport(importConfig{
-		project:    testProject,
-		database:   "(default)",
+		project:  testProject,
+		database: "(default)",
 
 		inputs:     []string{importDir},
 		onConflict: "overwrite",
@@ -604,8 +604,8 @@ func TestImportConflictMerge(t *testing.T) {
 	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
 
 	err := runImport(importConfig{
-		project:    testProject,
-		database:   "(default)",
+		project:  testProject,
+		database: "(default)",
 
 		inputs:     []string{importDir},
 		onConflict: "merge",
@@ -641,8 +641,8 @@ func TestImportConflictFail(t *testing.T) {
 	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
 
 	err := runImport(importConfig{
-		project:    testProject,
-		database:   "(default)",
+		project:  testProject,
+		database: "(default)",
 
 		inputs:     []string{importDir},
 		onConflict: "fail",
@@ -737,8 +737,8 @@ func TestImportDryRun(t *testing.T) {
 	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
 
 	err := runImport(importConfig{
-		project:    testProject,
-		database:   "(default)",
+		project:  testProject,
+		database: "(default)",
 
 		inputs:     []string{importDir},
 		onConflict: "skip",
@@ -774,8 +774,8 @@ heuristic_target/doc1,Alice,30,true,9.5,2024-06-15T12:00:00Z
 	os.WriteFile(filepath.Join(importDir, "data.csv"), []byte(csvContent), 0644)
 
 	err := runImport(importConfig{
-		project:    testProject,
-		database:   "(default)",
+		project:  testProject,
+		database: "(default)",
 
 		inputs:     []string{importDir},
 		onConflict: "overwrite",
