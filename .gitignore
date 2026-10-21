@@ -32,6 +32,7 @@ output/
 build/
 target/
 .capy/**
+!.capy
 !.capy/AGENTS.md
 
 # personal homebrew tap
